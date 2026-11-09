@@ -59,13 +59,15 @@ This repository provides standalone tools to claim game badges and maintain head
 <details open>
 <summary><b>Features ✨ (Click to expand)</b></summary>
 
-- ☑️ **Instant Game Telemetry Engine (`games.py`):** Emits authentic client-side game telemetry events directly to `/api/v9/science` to claim Tier 10 Game Time (5,000h) and Tier 10 Game Variety (100+ titles).
-- ☑️ **Headless Gateway AFK Streamer (`stream.py`):** Connects directly to Discord Gateway, completes the Voice WebSocket + UDP handshake, and broadcasts Opcode 18 `STREAM_CREATE` with Opus silence keepalive frames for reliable 24/7 Go Live status with **0% CPU and 0% GPU usage**.
+- ☑️ **Advanced Real Video & Audio Streamer (`stream.py`):** Transmits genuine local media (`assets/video.mp4`) in an endless, seamless loop with low-overhead H.264 video and Opus audio packetization.
+- ☑️ **Cross-Platform Viewing (PC & Mobile / DAVE E2EE):** Full implementation of Discord's DAVE (MLS End-to-End Encryption) protocol and periodic RTCP Sender Reports, ensuring real-time playback for viewers on desktop, browser, and mobile (iOS & Android) without Error 2012 ("Stream failed to start").
+- ☑️ **Automated Alt Viewer Bot (Option 3):** Built-in headless viewer engine that connects a secondary alt account to automatically join the voice channel and watch your stream, fulfilling Discord's badge requirement 100% autonomously without needing another device.
+- ☑️ **AFK Keepalive Fallback:** Can also operate in ultra-low-resource mode with Opus silence frames for 24/7 farming with **0% GPU usage**.
 - ☑️ **Multi-Connection Voice Architecture:** Handles main Gateway (v9), Voice WebSocket (v7), and dedicated Stream Voice WebSocket (v7) simultaneously with active heartbeats and protocol negotiation.
+- ☑️ **Instant Game Telemetry Engine (`games.py`):** Emits authentic client-side game telemetry events directly to `/api/v9/science` to claim Tier 10 Game Time (5,000h) and Tier 10 Game Variety (100+ titles).
 - ☑️ **Automated Game Catalog Integration:** Synchronizes with Discord's detectable games list to rotate through hundreds of verified titles for the Game Variety badge.
 - ☑️ **Live Profile & Badge Inspector:** Queries Discord's user profile API to display current badge tiers and equipped collectibles directly in your console.
 - ☑️ **Shared Authentication State:** Saves your session securely to `session.json` so you only have to provide auth once across both scripts.
-- ☑️ **Zero Dependencies:** Pure Python standard library (Python 3.10+). No `pip install` required (`cryptography` optional for encrypted RTP frames).
 
 </details>
 
@@ -139,10 +141,12 @@ Choose either of the two methods below to copy your `cf_clearance` cookie value:
 
 ## Step-by-Step Usage Guide
 
-Ensure Python 3.10+ is installed:
+Ensure Python 3.10+ and dependencies are installed:
 ```bash
 python --version
+pip install -r requirements.txt
 ```
+*(Requires `cryptography` for AES-256-GCM transport encryption and `dave.py` for Discord DAVE E2EE protocol. FFmpeg in PATH is required for real video playback).*
 
 ---
 
@@ -185,15 +189,26 @@ Run the stream maximizer:
 python stream.py
 ```
 
-### Start Live Stream (Gateway AFK Go Live Broadcast)
+### Stream Maximizer Menu Options
+
+#### Option 1: Start Live Stream (Real Video/Audio Broadcast)
 1. Select **Option 1** from the menu.
 2. Enter your **Server (Guild) ID** and **Voice Channel ID** (where your account has permission to join and stream).
 3. The engine automatically executes the complete 3-connection protocol:
    - **Main Gateway (v9):** Authenticates and sends Opcode 4 (`VOICE_STATE_UPDATE`) to join the channel.
-   - **Voice Gateway (v7):** Connects to the voice server, performs UDP IP Discovery, negotiates encryption, and pumps keepalive silence packets.
-   - **Stream Gateway (v7):** Sends Opcode 18 (`STREAM_CREATE`), connects to the dedicated stream media server, announces 1080p screen sharing, and pumps encrypted Opus silence.
-4. Your account immediately displays the purple **LIVE** badge on Discord. Leave it running in the background to accumulate streaming hours effortlessly 24/7.
+   - **Voice Gateway (v7):** Connects to the voice server, performs UDP IP Discovery, and initializes DAVE E2EE session.
+   - **Stream Gateway (v7):** Sends Opcode 18 (`STREAM_CREATE`), connects to the dedicated stream media server, and starts broadcasting real media from `assets/video.mp4` (or silence fallback if no video is present).
+   - **DAVE MLS Protocol & RTCP Sync:** Real-time key negotiation and 1-second RTCP Sender Reports allow viewers on **both PC and mobile devices (iOS/Android)** to watch smoothly in real-time.
+4. Your account immediately displays the **LIVE** badge on Discord. Leave it running in the background to accumulate streaming hours effortlessly 24/7.
 5. Press **Enter** at any time to gracefully end the stream and save accumulated hours.
+6. **Video Streamer:** You can use this script to stream your favourite clips/movies or anything to your friends from your local storage, replace the `assets/video.mp4` with your video (Yeah streaming badge time counts)
+
+#### Option 3: Automated Alt Viewer (Self-Contained Hour Farming)
+Discord requires at least 1 viewer in the channel for hours to count. Instead of manually opening a second device:
+1. Select **Option 3** from the menu (`Configure / Toggle Alt Viewer`).
+2. Enter a secondary Discord account token (your alt account).
+3. When Option 1 starts streaming, the engine automatically commands the alt account to join the voice channel, start watching the Go Live stream headlessly, and keep the broadcast timer active 24/7.
+4. The console displays real-time viewer detection and automatically resumes hour accumulation as soon as the alt viewer connects.
 
 > [!IMPORTANT]
 > ### ☁️ 24/7 AFK Cloud Hosting (Zero Device Wear & Zero Effort)
@@ -267,7 +282,7 @@ flowchart TD
 - <a href="https://github.com/revere-group"><img src="https://github.com/revere-group.png?size=60" width="28" height="28" style="border-radius: 50%; vertical-align: middle;" alt="Revere Group" /></a> **[Revere Group](https://github.com/revere-group)**: The core idea and original structure.
 - <a href="https://gist.github.com/dolfies"><img src="https://github.com/dolfies.png?size=60" width="28" height="28" style="border-radius: 50%; vertical-align: middle;" alt="dolfies" /></a> **[dolfies](https://gist.github.com/dolfies)**: `L44–L157`: From [Discord's executable fingerprint](https://gist.github.com/dolfies/d442777ab8354e18c1a3827e27f85c3a) reverse engineering script.
 ### `stream.py`
-- <a href="https://github.com/sonujana26"><img src="https://github.com/sonujana26.png?size=60" width="28" height="28" style="border-radius: 50%; vertical-align: middle;" alt="sonujana26" /></a> **[sonujana26](https://github.com/sonujana26)**: Advanced headless Gateway + Voice + Go Live stream engine.
+- <a href="https://github.com/sonujana26"><img src="https://github.com/sonujana26.png?size=60" width="28" height="28" style="border-radius: 50%; vertical-align: middle;" alt="sonujana26" /></a> **[sonujana26](https://github.com/sonujana26)**: Advanced headless Gateway + Voice + Video Streamer + Go Live stream engine.
 
 ---
 
