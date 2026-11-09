@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -242,17 +243,40 @@ class TerminalInterface:
     def log(self, message: str) -> None:
         print(f"  {self._render_timestamp()} {self.COLOR_MUTED}·{self.COLOR_RESET} {self.COLOR_TEXT}{message}{self.COLOR_RESET}")
 
-    def separator(self) -> None:
-        print(f"  {self.COLOR_MUTED}{self.DIVIDER}{self.COLOR_RESET}")
+    @staticmethod
+    def get_terminal_size() -> int:
+        try:
+            columns, _ = shutil.get_terminal_size()
+            return columns
+        except Exception:
+            return 80
+
+    def create_border(self, char: str = "═") -> str:
+        width = self.get_terminal_size()
+        return char * max(10, width - 2)
+
+    def separator(self, char: str = "─") -> None:
+        width = self.get_terminal_size()
+        print(f"\x1b[96m{char * width}{self.COLOR_RESET}")
 
     def clear_viewport(self) -> None:
         print("\x1b[2J\x1b[3J\x1b[H", end="")
 
     def display_header(self) -> None:
         self.clear_viewport()
+        width = self.get_terminal_size()
+        border = self.create_border("═")
+        title = "DISCORD BADGE MAXIMIZER"
+        subtitle = "Playtime & Game Variety Telemetry Engine"
+        pad_t = " " * max(0, (width - len(title) - 2) // 2)
+        pad_t_r = " " * max(0, width - len(title) - 2 - len(pad_t))
+        pad_s = " " * max(0, (width - len(subtitle) - 2) // 2)
+        pad_s_r = " " * max(0, width - len(subtitle) - 2 - len(pad_s))
         print()
-        print(f"  {self.COLOR_PRIMARY}DISCORD BADGE MAXIMIZER{self.COLOR_RESET} {self.COLOR_MUTED}·{self.COLOR_RESET} {self.COLOR_TEXT}Playtime & Game Variety{self.COLOR_RESET}")
-        print(f"    {self.COLOR_MUTED}Direct Telemetry Ingestion Engine{self.COLOR_RESET}")
+        print(f"\x1b[96m╔{border}╗{self.COLOR_RESET}")
+        print(f"\x1b[96m║{self.COLOR_RESET}{pad_t}{self.COLOR_TEXT}{title}{self.COLOR_RESET}{pad_t_r}\x1b[96m║{self.COLOR_RESET}")
+        print(f"\x1b[96m║{self.COLOR_RESET}{pad_s}{self.COLOR_MUTED}{subtitle}{self.COLOR_RESET}{pad_s_r}\x1b[96m║{self.COLOR_RESET}")
+        print(f"\x1b[96m╚{border}╝{self.COLOR_RESET}")
         print()
 
 
