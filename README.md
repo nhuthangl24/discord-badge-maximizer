@@ -26,8 +26,9 @@
 - [🇻🇳 HƯỚNG DẪN TIẾNG VIỆT](#-hướng-dẫn-tiếng-việt)
   - [1. Chế độ điều khiển qua Discord Bot (`bot.py`)](#1-chế-độ-điều-khiển-qua-discord-bot-botpy-khuyên-dùng) ⭐ *(Khuyên dùng)*
   - [2. Danh sách lệnh Slash (`/slash`)](#2-danh-sách-lệnh-slash-slash)
-  - [3. Chế độ chạy tự động trên VPS / Terminal (CLI Mode)](#3-chế-độ-chạy-tự-động-trên-vps--terminal-cli-mode)
-  - [4. Cách lấy User Token & Cookie](#4-cách-lấy-user-token--cookie-cf_clearance)
+  - [3. Tính năng Đa Người Dùng (Multi-User)](#3-tính-năng-đa-người-dùng-multi-user)
+  - [4. Chế độ chạy tự động trên VPS / Terminal (CLI Mode)](#4-chế-độ-chạy-tự-động-trên-vps--terminal-cli-mode)
+  - [5. Cách lấy User Token & Cookie](#5-cách-lấy-user-token--cookie-cf_clearance)
 - [🇺🇸 ENGLISH GUIDE](#-english-guide)
   - [Features Overview](#features-overview-)
   - [Bot Mode Setup](#bot-mode-setup)
@@ -102,7 +103,19 @@ Khi thấy dòng `[Bot] Đã đồng bộ thành công 8 lệnh Slash. Bot đã 
 
 ---
 
-### 3. Chế độ chạy tự động trên VPS / Terminal (CLI Mode)
+### 3. Tính năng Đa Người Dùng (Multi-User)
+
+Bot hỗ trợ **nhiều thành viên dùng chung** trong cùng một server hoặc nhiều server khác nhau mà không sợ xung đột:
+- **Dữ liệu cô lập 100%**: Mỗi người dùng bấm `/setup` hoặc `/panel` chỉ sửa và lưu token của chính mình (lưu tại `data/users/<discord_id>.json`).
+- **Phát sóng độc lập**: Nhiều người có thể gõ `/stream start` hoặc bấm nút trên `/panel` để phát song song cùng một lúc.
+- **Tự động tìm phòng voice thông minh**:
+  - Bot sẽ ưu tiên kiểm tra xem tài khoản user của bạn có trong server hiện tại không và tự chọn 1 phòng voice khả dụng.
+  - Nếu tài khoản của bạn chưa vào server hiện tại, bot sẽ tự động quét danh sách các server mà tài khoản của bạn đang tham gia để chọn 1 phòng voice ngẫu nhiên.
+  - *Lưu ý:* Hãy đảm bảo tài khoản user của bạn đã tham gia ít nhất 1 server có kênh thoại và có quyền **Kết nối (Connect)** + **Phát trực tiếp (Stream)**.
+
+---
+
+### 4. Chế độ chạy tự động trên VPS / Terminal (CLI Mode)
 
 Nếu không muốn chạy bot Discord mà muốn chạy trực tiếp bằng dòng lệnh:
 

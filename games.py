@@ -316,34 +316,42 @@ class AccountSessionState:
     used_games: list[str] = field(default_factory=list)
     total_games_claimed: int = 0
     total_hours_claimed: float = 0.0
+    _filepath: Optional[Path] = field(default=None, repr=False)
 
     @classmethod
-    def restore(cls) -> "AccountSessionState":
+    def restore(cls, path: Optional[Path] = None) -> "AccountSessionState":
+        target = path or STATE_STORAGE_PATH
         instance = cls()
-        if STATE_STORAGE_PATH.exists():
+        instance._filepath = target
+        if target.exists():
             try:
-                raw_data = json.loads(STATE_STORAGE_PATH.read_text(encoding="utf-8"))
+                raw_data = json.loads(target.read_text(encoding="utf-8"))
                 known_keys = set(cls().__dict__.keys())
-                instance = cls(**{k: v for k, v in raw_data.items() if k in known_keys and k != "used_games"})
+                instance = cls(**{k: v for k, v in raw_data.items() if k in known_keys and k != "used_games" and not k.startswith("_")})
                 instance.used_games = raw_data.get("used_games", [])
+                instance._filepath = target
             except Exception:
                 pass
-        # Fall back to environment variables if not present in session.json
-        if not instance.token and os.environ.get("DISCORD_TOKEN"):
-            instance.token = os.environ["DISCORD_TOKEN"].strip()
-        if not instance.cookie and os.environ.get("DISCORD_COOKIE"):
-            instance.cookie = os.environ["DISCORD_COOKIE"].strip()
+        # Fall back to environment variables if not present in session.json (only when no custom path specified)
+        if not path:
+            if not instance.token and os.environ.get("DISCORD_TOKEN"):
+                instance.token = os.environ["DISCORD_TOKEN"].strip()
+            if not instance.cookie and os.environ.get("DISCORD_COOKIE"):
+                instance.cookie = os.environ["DISCORD_COOKIE"].strip()
         return instance
 
-    def persist(self) -> None:
+    def persist(self, path: Optional[Path] = None) -> None:
+        target = path or getattr(self, "_filepath", None) or STATE_STORAGE_PATH
+        target.parent.mkdir(parents=True, exist_ok=True)
         existing = {}
-        if STATE_STORAGE_PATH.exists():
+        if target.exists():
             try:
-                existing = json.loads(STATE_STORAGE_PATH.read_text(encoding="utf-8"))
+                existing = json.loads(target.read_text(encoding="utf-8"))
             except Exception:
                 pass
-        existing.update(asdict(self))
-        STATE_STORAGE_PATH.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        save_data = {k: v for k, v in asdict(self).items() if not k.startswith("_")}
+        existing.update(save_data)
+        target.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
     @property
     def requires_refresh(self) -> bool:
@@ -664,9 +672,15 @@ class IngestionPipeline:
 
 
 class ApplicationController:
-    def __init__(self) -> None:
+    def __init__(self, state: Optional[AccountSessionState] = None, session_path: Optional[Path] = None) -> None:
         self.terminal = TerminalInterface()
-        self.state = AccountSessionState.restore()
+        self.session_path = session_path
+        if state is not None:
+            self.state = state
+        elif session_path is not None:
+            self.state = AccountSessionState.restore(session_path)
+        else:
+            self.state = AccountSessionState.restore()
         self.runtime_context: RuntimeClientContext | None = None
         self.fabricator: TelemetryEventFabricator | None = None
         self.catalog: list[DetectableTitle] = []

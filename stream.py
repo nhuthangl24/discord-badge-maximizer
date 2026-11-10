@@ -42,9 +42,9 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Sequence, Optional
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -255,40 +255,52 @@ class State:
     last_guild_id: str = ""
     last_channel_id: str = ""
     viewer_token: str = ""
+    used_games: list[str] = field(default_factory=list)
+    total_games_claimed: int = 0
+    total_hours_claimed: float = 0.0
+    _filepath: Optional[Path] = field(default=None, repr=False)
 
     @classmethod
-    def load(cls) -> "State":
+    def load(cls, path: Optional[Path] = None) -> "State":
+        target = path or STATE_FILE
         inst = cls()
-        if STATE_FILE.exists():
+        inst._filepath = target
+        if target.exists():
             try:
-                data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                data = json.loads(target.read_text(encoding="utf-8"))
                 known_keys = set(cls().__dict__.keys())
-                filtered = {k: v for k, v in data.items() if k in known_keys}
+                filtered = {k: v for k, v in data.items() if k in known_keys and k != "used_games" and not k.startswith("_")}
                 inst = cls(**filtered)
+                inst.used_games = data.get("used_games", [])
+                inst._filepath = target
             except Exception:
                 pass
-        # Fallback to environment variables
-        if not inst.token and os.environ.get("DISCORD_TOKEN"):
-            inst.token = os.environ["DISCORD_TOKEN"].strip()
-        if not inst.cookie and os.environ.get("DISCORD_COOKIE"):
-            inst.cookie = os.environ["DISCORD_COOKIE"].strip()
-        if not inst.viewer_token and os.environ.get("DISCORD_VIEWER_TOKEN"):
-            inst.viewer_token = os.environ["DISCORD_VIEWER_TOKEN"].strip()
-        if not inst.last_channel_id and os.environ.get("DISCORD_CHANNEL_ID"):
-            inst.last_channel_id = os.environ["DISCORD_CHANNEL_ID"].strip()
-        if not inst.last_guild_id and os.environ.get("DISCORD_GUILD_ID"):
-            inst.last_guild_id = os.environ["DISCORD_GUILD_ID"].strip()
+        # Fallback to environment variables only if no explicit path is passed
+        if not path:
+            if not inst.token and os.environ.get("DISCORD_TOKEN"):
+                inst.token = os.environ["DISCORD_TOKEN"].strip()
+            if not inst.cookie and os.environ.get("DISCORD_COOKIE"):
+                inst.cookie = os.environ["DISCORD_COOKIE"].strip()
+            if not inst.viewer_token and os.environ.get("DISCORD_VIEWER_TOKEN"):
+                inst.viewer_token = os.environ["DISCORD_VIEWER_TOKEN"].strip()
+            if not inst.last_channel_id and os.environ.get("DISCORD_CHANNEL_ID"):
+                inst.last_channel_id = os.environ["DISCORD_CHANNEL_ID"].strip()
+            if not inst.last_guild_id and os.environ.get("DISCORD_GUILD_ID"):
+                inst.last_guild_id = os.environ["DISCORD_GUILD_ID"].strip()
         return inst
 
-    def save(self) -> None:
+    def save(self, path: Optional[Path] = None) -> None:
+        target = path or getattr(self, "_filepath", None) or STATE_FILE
+        target.parent.mkdir(parents=True, exist_ok=True)
         existing = {}
-        if STATE_FILE.exists():
+        if target.exists():
             try:
-                existing = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                existing = json.loads(target.read_text(encoding="utf-8"))
             except Exception:
                 pass
-        existing.update(asdict(self))
-        STATE_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        save_data = {k: v for k, v in asdict(self).items() if not k.startswith("_")}
+        existing.update(save_data)
+        target.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
     @property
     def is_stale(self) -> bool:
@@ -1813,7 +1825,7 @@ class GatewayStreamEngine:
             pass
         return "channel", ""
 
-    def start_stream(self, guild_id: str = "", channel_id: str = "") -> None:
+    def start_stream(self, guild_id: str = "", channel_id: str = "", wait_for_stdin: bool = True) -> None:
         C = self.console
         C.rule()
         C.info(f"{C.MAGENTA}Headless Gateway Live Streamer{C.WHITE}")
@@ -1991,29 +2003,33 @@ class GatewayStreamEngine:
         )
         self._status_thread.start()
 
-        print()
-        C.info(f"{C.GREY}press enter at any time to stop streaming...{C.RESET}")
-        C.rule()
-        try:
-            import msvcrt
-            while self.running:
-                if msvcrt.kbhit():
-                    ch = msvcrt.getch()
-                    if ch in (b'\r', b'\n', b'\x03'):
-                        break
-                time.sleep(0.1)
-        except Exception:
-            while self.running:
-                try:
-                    if sys.stdin.isatty():
-                        r, _, _ = select.select([sys.stdin], [], [], 0.5)
-                        if r:
-                            _ = sys.stdin.readline()
+        if wait_for_stdin:
+            print()
+            C.info(f"{C.GREY}press enter at any time to stop streaming...{C.RESET}")
+            C.rule()
+            try:
+                import msvcrt
+                while self.running:
+                    if msvcrt.kbhit():
+                        ch = msvcrt.getch()
+                        if ch in (b'\r', b'\n', b'\x03'):
                             break
-                    else:
-                        time.sleep(0.5)
-                except (Exception, KeyboardInterrupt):
-                    break
+                    time.sleep(0.1)
+            except Exception:
+                while self.running:
+                    try:
+                        if sys.stdin.isatty():
+                            r, _, _ = select.select([sys.stdin], [], [], 0.5)
+                            if r:
+                                _ = sys.stdin.readline()
+                                break
+                        else:
+                            time.sleep(0.5)
+                    except (Exception, KeyboardInterrupt):
+                        break
+        else:
+            while self.running:
+                time.sleep(0.5)
 
         self._cleanup(self.guild_id)
 
