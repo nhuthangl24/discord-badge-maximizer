@@ -71,6 +71,32 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 STATE_FILE = ROOT / "session.json"
 
+
+def _load_env_file(filepath: Path) -> None:
+    if filepath.is_file():
+        try:
+            for line in filepath.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip("'\"")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+        except Exception:
+            pass
+
+
+_load_env_file(ROOT / ".env")
+
+
+def safe_input(prompt: str = "") -> str:
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -232,15 +258,27 @@ class State:
 
     @classmethod
     def load(cls) -> "State":
+        inst = cls()
         if STATE_FILE.exists():
             try:
                 data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 known_keys = set(cls().__dict__.keys())
                 filtered = {k: v for k, v in data.items() if k in known_keys}
-                return cls(**filtered)
+                inst = cls(**filtered)
             except Exception:
                 pass
-        return cls()
+        # Fallback to environment variables
+        if not inst.token and os.environ.get("DISCORD_TOKEN"):
+            inst.token = os.environ["DISCORD_TOKEN"].strip()
+        if not inst.cookie and os.environ.get("DISCORD_COOKIE"):
+            inst.cookie = os.environ["DISCORD_COOKIE"].strip()
+        if not inst.viewer_token and os.environ.get("DISCORD_VIEWER_TOKEN"):
+            inst.viewer_token = os.environ["DISCORD_VIEWER_TOKEN"].strip()
+        if not inst.last_channel_id and os.environ.get("DISCORD_CHANNEL_ID"):
+            inst.last_channel_id = os.environ["DISCORD_CHANNEL_ID"].strip()
+        if not inst.last_guild_id and os.environ.get("DISCORD_GUILD_ID"):
+            inst.last_guild_id = os.environ["DISCORD_GUILD_ID"].strip()
+        return inst
 
     def save(self) -> None:
         existing = {}
@@ -848,14 +886,20 @@ class MediaStreamPump:
                 self.v_proc.terminate()
                 self.v_proc.wait(timeout=1.0)
             except Exception:
-                pass
+                try:
+                    self.v_proc.kill()
+                except Exception:
+                    pass
             self.v_proc = None
         if self.a_proc:
             try:
                 self.a_proc.terminate()
                 self.a_proc.wait(timeout=1.0)
             except Exception:
-                pass
+                try:
+                    self.a_proc.kill()
+                except Exception:
+                    pass
             self.a_proc = None
 
 
@@ -1502,6 +1546,46 @@ def validate_stream_target(
     return True, resolved_guild_id, ch_name
 
 
+def find_random_voice_channel_from_token(token: str, super_props: str = "") -> tuple[str, str, str]:
+    """
+    Scans servers accessible by the user token and picks a random Voice Channel.
+    Returns (channel_id, guild_id, channel_name) or ("", "", "") if none found.
+    """
+    import random
+    status, guilds = _discord_api_get("https://discord.com/api/v9/users/@me/guilds", token, super_props)
+    if status != 200 or not isinstance(guilds, list) or not guilds:
+        return "", "", ""
+
+    shuffled_guilds = list(guilds)
+    random.shuffle(shuffled_guilds)
+
+    for g in shuffled_guilds:
+        gid = str(g.get("id", ""))
+        if not gid:
+            continue
+        c_status, channels = _discord_api_get(f"https://discord.com/api/v9/guilds/{gid}/channels", token, super_props)
+        if c_status != 200 or not isinstance(channels, list):
+            continue
+        vcs = [c for c in channels if c.get("type") in (2, 13)]
+        if not vcs:
+            continue
+        random.shuffle(vcs)
+        for vc in vcs:
+            cid = str(vc.get("id", ""))
+            name = str(vc.get("name", "voice"))
+            raw_perms = vc.get("permissions")
+            if raw_perms is not None:
+                try:
+                    perms = int(raw_perms)
+                    if not (perms & PERMISSION_ADMINISTRATOR or perms & PERMISSION_CONNECT):
+                        continue
+                except Exception:
+                    pass
+            return cid, gid, name
+
+    return "", "", ""
+
+
 
 class ViewerEngine:
     def __init__(self, token: str, console: Console) -> None:
@@ -1691,6 +1775,10 @@ class GatewayStreamEngine:
         self.ready_received = threading.Event()
         self._cached_supplemental_guilds: list[dict] = []
 
+    def stop(self) -> None:
+        """Signal the stream engine to gracefully stop broadcasting."""
+        self.running = False
+
     def get_viewer_count(self) -> int:
         members = set(self.channel_members) | set(self.stream_viewer_ids)
         if self.user_id:
@@ -1738,7 +1826,7 @@ class GatewayStreamEngine:
         except Exception as exc:
             C.err("gateway", f"connection failed: {exc}")
             C.rule()
-            input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
+            safe_input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
             return
 
         C.ok("gateway", "connected")
@@ -1762,7 +1850,7 @@ class GatewayStreamEngine:
 
         if not self.running:
             C.rule()
-            input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
+            safe_input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
             return
 
         if self.detected_channel_id:
@@ -1775,44 +1863,86 @@ class GatewayStreamEngine:
             self.channel_name = ch_name
             C.ok("voice", f"voice channel connection detected: {C.WHITE}#{ch_name}{C.RESET} ({target_channel_id})")
             C.info(f"{C.GREY}starting streaming there and next procedures...{C.RESET}")
+        elif channel_id:
+            cid = extract_channel_id(channel_id)
+            valid, gid, name = validate_stream_target(
+                token=self.state.token,
+                super_props=self.session.super_props,
+                channel_id=cid,
+                console=C,
+            )
+            if not valid:
+                C.err("input", f"specified channel ID ({cid}) is invalid or inaccessible")
+                self._cleanup(self.guild_id)
+                return
+            target_channel_id = cid
+            target_guild_id = gid or guild_id
+            self.channel_name = name
+            self.state.last_guild_id = target_guild_id
+            self.state.last_channel_id = target_channel_id
+            self.state.save()
         else:
             C.info("no active voice channel detected on discord client.")
             target_guild_id = ""
             target_channel_id = ""
-            while True:
-                default_cid = self.state.last_channel_id
-                prompt_str = f"  {C.GREY}voice channel id (or link)" + (f" [default: {default_cid}]:{C.RESET} " if default_cid else f":{C.RESET} ")
-                raw_in = input(prompt_str).strip()
-                if not raw_in and default_cid:
-                    raw_in = default_cid
-                if not raw_in:
-                    C.err("input", "voice channel id is required")
-                    self._cleanup(self.guild_id)
-                    return
-                if raw_in.lower() in ("q", "quit", "exit"):
-                    self._cleanup(self.guild_id)
-                    return
 
-                cid = extract_channel_id(raw_in)
-                valid, gid, name = validate_stream_target(
-                    token=self.state.token,
-                    super_props=self.session.super_props,
-                    channel_id=cid,
-                    console=C,
-                )
-                if valid:
-                    target_channel_id = cid
-                    target_guild_id = gid
-                    self.channel_name = name
-                    self.state.last_guild_id = gid
-                    self.state.last_channel_id = cid
-                    self.state.save()
-                    break
+            # In non-interactive mode, attempt auto-discovery of a random voice room
+            if not sys.stdin.isatty():
+                C.info("auto-discovering a random voice channel from accessible servers...")
+                rcid, rgid, rname = find_random_voice_channel_from_token(self.state.token, self.session.super_props)
+                if rcid:
+                    target_channel_id = rcid
+                    target_guild_id = rgid
+                    self.channel_name = rname
+                    C.ok("channel", f"random voice room selected: #{rname} ({rcid})")
 
-                retry = input(f"  {C.ORANGE}›{C.RESET} try entering channel ID again? (y/n, default: y): ").strip().lower()
-                if retry in ("n", "no", "q", "exit"):
-                    self._cleanup(self.guild_id)
-                    return
+            if not target_channel_id:
+                while True:
+                    default_cid = self.state.last_channel_id
+                    prompt_str = f"  {C.GREY}voice channel id (or 'random')" + (f" [default: {default_cid}]:{C.RESET} " if default_cid else f":{C.RESET} ")
+                    raw_in = safe_input(prompt_str).strip()
+                    if raw_in.lower() in ("random", "r"):
+                        rcid, rgid, rname = find_random_voice_channel_from_token(self.state.token, self.session.super_props)
+                        if rcid:
+                            target_channel_id = rcid
+                            target_guild_id = rgid
+                            self.channel_name = rname
+                            C.ok("channel", f"random voice room selected: #{rname} ({rcid})")
+                            break
+                        else:
+                            C.err("channel", "could not find any accessible voice channel")
+                            continue
+
+                    if not raw_in and default_cid:
+                        raw_in = default_cid
+                    if not raw_in:
+                        C.err("input", "voice channel id is required")
+                        self._cleanup(self.guild_id)
+                        return
+                    if raw_in.lower() in ("q", "quit", "exit"):
+                        self._cleanup(self.guild_id)
+                        return
+
+                    cid = extract_channel_id(raw_in)
+                    valid, gid, name = validate_stream_target(
+                        token=self.state.token,
+                        super_props=self.session.super_props,
+                        channel_id=cid,
+                        console=C,
+                    )
+                    if valid:
+                        target_channel_id = cid
+                        target_guild_id = gid
+                        self.channel_name = name
+                        self.state.last_guild_id = gid
+                        self.state.last_channel_id = cid
+                        self.state.save()
+                        break
+
+                    retry = safe_input(f"  {C.ORANGE}›{C.RESET} try entering channel ID again? (y/n, default: y): ").strip().lower()
+                    if retry in ("n", "no", "q", "exit"):
+                        self._cleanup(self.guild_id)
+                        return
 
         self.guild_id = target_guild_id
         self.channel_id = target_channel_id
@@ -1874,7 +2004,16 @@ class GatewayStreamEngine:
                 time.sleep(0.1)
         except Exception:
             while self.running:
-                time.sleep(0.5)
+                try:
+                    if sys.stdin.isatty():
+                        r, _, _ = select.select([sys.stdin], [], [], 0.5)
+                        if r:
+                            _ = sys.stdin.readline()
+                            break
+                    else:
+                        time.sleep(0.5)
+                except (Exception, KeyboardInterrupt):
+                    break
 
         self._cleanup(self.guild_id)
 
@@ -2573,7 +2712,7 @@ class GatewayStreamEngine:
             C.info("stream session ended.")
 
         C.rule()
-        input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
+        safe_input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
 
 
 
@@ -2582,7 +2721,7 @@ def inspect_profile(state: State, session: Session, console: Console) -> None:
     if not state.has_token:
         C.err("auth", "no token saved")
         C.rule()
-        input(f"  {C.ORANGE}›{C.RESET} press enter to continue")
+        safe_input(f"  {C.ORANGE}›{C.RESET} press enter to continue")
         return
 
     C.info("fetching profile data from discord...")
@@ -2605,7 +2744,7 @@ def inspect_profile(state: State, session: Session, console: Console) -> None:
     if not uid:
         C.err("profile", "unable to resolve user id from token")
         C.rule()
-        input(f"  {C.ORANGE}›{C.RESET} press enter to continue")
+        safe_input(f"  {C.ORANGE}›{C.RESET} press enter to continue")
         return
 
     url = f"{USERS_URL}/{uid}/profile?with_mutual_guilds=false&with_mutual_friends_count=false"
@@ -2641,7 +2780,7 @@ def inspect_profile(state: State, session: Session, console: Console) -> None:
         C.err("profile", f"failed to load: {exc}")
 
     C.rule()
-    input(f"  {C.ORANGE}›{C.RESET} press enter to continue")
+    safe_input(f"  {C.ORANGE}›{C.RESET} press enter to continue")
 
 
 
@@ -2651,7 +2790,7 @@ class StreamMaximizerApp:
         self.state = State.load()
         self.session: Session | None = None
 
-    def start(self) -> None:
+    def start(self, auto_menu: bool = True) -> bool:
         C = self.console
         C.banner()
         time.sleep(0.3)
@@ -2662,7 +2801,7 @@ class StreamMaximizerApp:
             C.ok("auth", "token loaded from state")
         if not self.state.has_token:
             C.err("token", "required to run")
-            return
+            return False
 
         if not self.state.has_cookie:
             self._prompt_cookie()
@@ -2670,7 +2809,7 @@ class StreamMaximizerApp:
             C.ok("auth", "cf_clearance cookie loaded")
         if not self.state.has_cookie:
             C.err("cookie", "required to run")
-            return
+            return False
 
         C.info("validating session...")
         self._new_session()
@@ -2679,7 +2818,7 @@ class StreamMaximizerApp:
             C.ok("auth", "ready · analytics token cached")
         except Exception as exc:
             C.err("auth", str(exc))
-            return
+            return False
 
         if HAS_CRYPTO:
             C.ok("crypto", "cryptography library verified (live streaming engine ready)")
@@ -2687,14 +2826,16 @@ class StreamMaximizerApp:
             C.err("crypto", "cryptography package is MISSING! Live video streaming will NOT work. Run: pip install -r requirements.txt")
 
         time.sleep(0.5)
-        self.menu()
+        if auto_menu:
+            self.menu()
+        return True
 
     def _new_session(self) -> None:
         self.session = Session.new()
 
     def _prompt_token(self) -> None:
         self.console.info("paste your discord account token")
-        entered = input(f"  {self.console.GREY}token:{self.console.RESET} ").strip()
+        entered = safe_input(f"  {self.console.GREY}token:{self.console.RESET} ").strip()
         if entered:
             self.state.token = entered
             self.state.save()
@@ -2702,7 +2843,7 @@ class StreamMaximizerApp:
 
     def _prompt_cookie(self) -> None:
         self.console.info("paste your cf_clearance cookie header")
-        entered = input(f"  {self.console.GREY}cookie:{self.console.RESET} ").strip()
+        entered = safe_input(f"  {self.console.GREY}cookie:{self.console.RESET} ").strip()
         if entered:
             self.state.cookie = entered
             self.state.save()
@@ -2711,13 +2852,13 @@ class StreamMaximizerApp:
     def _refresh(self) -> None:
         C = self.console
         C.info("paste updated token (or leave empty to keep current):")
-        tok = input(f"  {C.GREY}token:{C.RESET} ").strip()
+        tok = safe_input(f"  {C.GREY}token:{C.RESET} ").strip()
         if tok:
             self.state.token = tok
             C.ok("token", "updated")
 
         C.info("paste fresh cf_clearance cookie (or leave empty to keep current):")
-        ck = input(f"  {C.GREY}cookie:{C.RESET} ").strip()
+        ck = safe_input(f"  {C.GREY}cookie:{C.RESET} ").strip()
         if ck:
             self.state.cookie = ck
             C.ok("cookie", "updated")
@@ -2747,7 +2888,7 @@ class StreamMaximizerApp:
         )
         C.info(f"current alt token: {C.ORANGE}{curr}{C.RESET}")
         print()
-        entered = input(f"  {C.GREY}alt token (press enter to clear):{C.RESET} ").strip()
+        entered = safe_input(f"  {C.GREY}alt token (press enter to clear):{C.RESET} ").strip()
         self.state.viewer_token = entered
         self.state.save()
         if entered:
@@ -2756,7 +2897,7 @@ class StreamMaximizerApp:
             C.warn("viewer", "alt viewer token cleared (disabled)")
         time.sleep(1.2)
 
-    def run_gateway_live_streamer(self) -> None:
+    def run_gateway_live_streamer(self, guild_id: str = "", channel_id: str = "") -> None:
         """Start a headless Go Live stream in a voice channel."""
         C = self.console
         C.rule()
@@ -2780,7 +2921,7 @@ class StreamMaximizerApp:
         print()
 
         engine = GatewayStreamEngine(self.state, self.session, self.console)
-        engine.start_stream()
+        engine.start_stream(guild_id=guild_id, channel_id=channel_id)
 
     def _reset_main_token(self) -> None:
         C = self.console
@@ -2793,7 +2934,7 @@ class StreamMaximizerApp:
         )
         C.info(f"current main token: {C.ORANGE}{curr}{C.RESET}")
         print()
-        entered = input(f"  {C.GREY}new main token (press enter to clear):{C.RESET} ").strip()
+        entered = safe_input(f"  {C.GREY}new main token (press enter to clear):{C.RESET} ").strip()
         if entered:
             self.state.token = entered
             self.state.fetched_at = 0
@@ -2823,7 +2964,7 @@ class StreamMaximizerApp:
         )
         C.info(f"current alt token: {C.ORANGE}{curr}{C.RESET}")
         print()
-        entered = input(f"  {C.GREY}new alt token (press enter to clear):{C.RESET} ").strip()
+        entered = safe_input(f"  {C.GREY}new alt token (press enter to clear):{C.RESET} ").strip()
         self.state.viewer_token = entered
         self.state.save()
         if entered:
@@ -2849,7 +2990,7 @@ class StreamMaximizerApp:
             C.info(f"{C.ORANGE}7{C.RESET} · Exit")
             C.rule()
 
-            choice = input(f"  {C.ORANGE}›{C.RESET} ").strip()
+            choice = safe_input(f"  {C.ORANGE}›{C.RESET} ").strip()
             print()
             if choice == "1":
                 self.run_gateway_live_streamer()
@@ -2863,7 +3004,7 @@ class StreamMaximizerApp:
                 self._reset_main_token()
             elif choice == "6":
                 self._reset_alt_token()
-            elif choice in ("7", "exit", "q"):
+            elif choice in ("7", "exit", "q", ""):
                 break
             else:
                 C.warn("input", "invalid option")
@@ -2871,8 +3012,28 @@ class StreamMaximizerApp:
 
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Discord Stream Badge Maximizer (Headless Live Streamer)")
+    parser.add_argument("--stream", "--auto", dest="auto_stream", action="store_true", help="Start streaming automatically without menu")
+    parser.add_argument("--channel", type=str, default="", help="Target voice channel ID or link")
+    parser.add_argument("--guild", type=str, default="", help="Target guild ID")
+    parser.add_argument("--profile", action="store_true", help="Inspect Discord profile and exit")
+    args, _ = parser.parse_known_args()
+
     try:
-        StreamMaximizerApp().start()
+        app = StreamMaximizerApp()
+        if args.auto_stream or args.profile:
+            ready = app.start(auto_menu=False)
+            if not ready:
+                return
+            if args.profile:
+                inspect_profile(app.state, app.session, app.console)
+            elif args.auto_stream:
+                target_cid = args.channel or app.state.last_channel_id
+                target_gid = args.guild or app.state.last_guild_id
+                app.run_gateway_live_streamer(guild_id=target_gid, channel_id=target_cid)
+        else:
+            app.start(auto_menu=True)
     except KeyboardInterrupt:
         print()
         Console().warn("exit", "operation interrupted by user")

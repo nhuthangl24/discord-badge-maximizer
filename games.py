@@ -20,6 +20,32 @@ WORKSPACE_DIR = Path(__file__).resolve().parent
 STATE_STORAGE_PATH = WORKSPACE_DIR / "session.json"
 DATABASE_STORAGE_PATH = WORKSPACE_DIR.parent / "data" / "games.json"
 
+
+def _load_env_file(filepath: Path) -> None:
+    if filepath.is_file():
+        try:
+            for line in filepath.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip("'\"")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+        except Exception:
+            pass
+
+
+_load_env_file(WORKSPACE_DIR / ".env")
+
+
+def safe_input(prompt: str = "") -> str:
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
 REST_IDENTITY_URL = "https://discord.com/api/v9/users/@me?with_analytics_token=true"
 DISCORD_USERS_API = "https://discord.com/api/v9/users"
 TELEMETRY_INGEST_URL = "https://discord.com/api/v9/science"
@@ -293,16 +319,21 @@ class AccountSessionState:
 
     @classmethod
     def restore(cls) -> "AccountSessionState":
+        instance = cls()
         if STATE_STORAGE_PATH.exists():
             try:
                 raw_data = json.loads(STATE_STORAGE_PATH.read_text(encoding="utf-8"))
                 known_keys = set(cls().__dict__.keys())
                 instance = cls(**{k: v for k, v in raw_data.items() if k in known_keys and k != "used_games"})
                 instance.used_games = raw_data.get("used_games", [])
-                return instance
             except Exception:
                 pass
-        return cls()
+        # Fall back to environment variables if not present in session.json
+        if not instance.token and os.environ.get("DISCORD_TOKEN"):
+            instance.token = os.environ["DISCORD_TOKEN"].strip()
+        if not instance.cookie and os.environ.get("DISCORD_COOKIE"):
+            instance.cookie = os.environ["DISCORD_COOKIE"].strip()
+        return instance
 
     def persist(self) -> None:
         existing = {}
@@ -691,7 +722,7 @@ class ApplicationController:
 
     def _prompt_account_token(self) -> None:
         self.terminal.log("Paste your Discord account authorization token:")
-        val = input(f"  {self.terminal.COLOR_MUTED}token:{self.terminal.COLOR_RESET} ").strip()
+        val = safe_input(f"  {self.terminal.COLOR_MUTED}token:{self.terminal.COLOR_RESET} ").strip()
         if val:
             self.state.token = val
             self.state.persist()
@@ -699,7 +730,7 @@ class ApplicationController:
 
     def _prompt_clearance_cookie(self) -> None:
         self.terminal.log("Paste your cf_clearance cookie header value:")
-        val = input(f"  {self.terminal.COLOR_MUTED}cookie:{self.terminal.COLOR_RESET} ").strip()
+        val = safe_input(f"  {self.terminal.COLOR_MUTED}cookie:{self.terminal.COLOR_RESET} ").strip()
         if val:
             self.state.cookie = val
             self.state.persist()
@@ -708,10 +739,10 @@ class ApplicationController:
     def _reconfigure_credentials(self) -> None:
         T = self.terminal
         T.log("Update cookie header? [y/n]")
-        ans = input(f"  {T.COLOR_MUTED}›{T.COLOR_RESET} ").strip().lower()
+        ans = safe_input(f"  {T.COLOR_MUTED}›{T.COLOR_RESET} ").strip().lower()
         if ans in ("y", "yes"):
             T.log("Paste fresh cookie header:")
-            new_ck = input(f"  {T.COLOR_MUTED}cookie:{T.COLOR_RESET} ").strip()
+            new_ck = safe_input(f"  {T.COLOR_MUTED}cookie:{T.COLOR_RESET} ").strip()
             if new_ck:
                 self.state.cookie = new_ck
                 T.success("cookie", "Updated")
@@ -748,7 +779,7 @@ class ApplicationController:
         print()
         T.log(f"{len(self.catalog)} detectable games available.")
 
-        raw_count = input(f"  {T.COLOR_MUTED}Target games count [all]:{T.COLOR_RESET} ").strip()
+        raw_count = safe_input(f"  {T.COLOR_MUTED}Target games count [all]:{T.COLOR_RESET} ").strip()
         try:
             target_count = int(raw_count) if raw_count else len(self.catalog)
         except ValueError:
@@ -756,7 +787,7 @@ class ApplicationController:
             return
         target_count = min(target_count, len(self.catalog))
 
-        raw_hours = input(f"  {T.COLOR_MUTED}Hours per game [1]:{T.COLOR_RESET} ").strip()
+        raw_hours = safe_input(f"  {T.COLOR_MUTED}Hours per game [1]:{T.COLOR_RESET} ").strip()
         try:
             target_hours = float(raw_hours) if raw_hours else 1.0
         except ValueError:
@@ -788,7 +819,7 @@ class ApplicationController:
 
         T.log(f"{T.COLOR_MUTED}note: discord badge progression updates every 24-48h on analytics sync.{T.COLOR_RESET}")
         T.separator()
-        input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} Press enter to return to menu")
+        safe_input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} Press enter to return to menu")
 
     def _filter_title_selection(self, desired_amount: int) -> list[DetectableTitle]:
         existing_pool = {item.title_id for item in self.catalog}
@@ -823,7 +854,7 @@ class ApplicationController:
         T.log("Generate executable fingerprint bound to account and machine.")
         T.log(f"Account Snowflake: {T.COLOR_PRIMARY}{account_id}{T.COLOR_RESET}")
         T.log("Provide an executable (.exe) path or active game Process ID (PID):")
-        raw_input = input(f"  {T.COLOR_MUTED}path or PID:{T.COLOR_RESET} ").strip().strip('"')
+        raw_input = safe_input(f"  {T.COLOR_MUTED}path or PID:{T.COLOR_RESET} ").strip().strip('"')
         if not raw_input:
             T.log("Operation cancelled.")
             time.sleep(1)
@@ -854,7 +885,7 @@ class ApplicationController:
         if not self.state.token:
             T.failure("auth", "No user token configured.")
             T.separator()
-            input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} Press enter to continue")
+            safe_input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} Press enter to continue")
             return
 
         T.log("Retrieving profile data from Discord...")
@@ -878,7 +909,7 @@ class ApplicationController:
         if not uid:
             T.failure("profile", "Unable to resolve account identity snowflake.")
             T.separator()
-            input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} Press enter to continue")
+            safe_input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} Press enter to continue")
             return
 
         target_url = f"{DISCORD_USERS_API}/{uid}/profile?with_mutual_guilds=false&with_mutual_friends_count=false"
@@ -914,7 +945,67 @@ class ApplicationController:
             T.failure("profile", f"Failed to retrieve profile: {exc}")
 
         T.separator()
-        input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} Press enter to continue")
+        safe_input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} Press enter to continue")
+
+    def start_headless(self, games_count: int | None = None, hours: float | None = None) -> dict:
+        """Automated non-interactive execution for bot/daemon workflows."""
+        self.terminal.display_header()
+        if not self.state.token or not self.state.cookie:
+            err = "Token and cf_clearance cookie are required (set in .env or session.json)"
+            self.terminal.failure("auth", err)
+            return {"success": False, "error": err}
+
+        self.terminal.log("loading detectable games catalog...")
+        self.catalog = load_game_catalog()
+        if not self.catalog:
+            err = "Unable to retrieve detectable games catalog."
+            self.terminal.failure("catalog", err)
+            return {"success": False, "error": err}
+        self.terminal.success("catalog", f"{len(self.catalog)} verified titles loaded")
+
+        self.terminal.log("synchronizing analytics credentials...")
+        self._renew_session()
+        try:
+            synchronize_credentials(self.state, self.runtime_context.encoded_properties)
+        except Exception as exc:
+            self.terminal.failure("auth", str(exc))
+            return {"success": False, "error": str(exc)}
+        self.terminal.success("auth", "Ingestion pipeline initialized")
+
+        target_count = games_count if games_count is not None else len(self.catalog)
+        target_count = min(target_count, len(self.catalog))
+        target_hours = hours if hours is not None else 1.0
+
+        selected_titles = self._filter_title_selection(target_count)
+        if not selected_titles:
+            err = "No titles selected."
+            self.terminal.failure("catalog", err)
+            return {"success": False, "error": err}
+
+        duration_ms = int(target_hours * 3600 * 1000)
+        total_aggregate = len(selected_titles) * target_hours
+        print()
+        self.terminal.log(f"Submitting {self.terminal.COLOR_PRIMARY}{target_hours:g}h{self.terminal.COLOR_TEXT} across {self.terminal.COLOR_PRIMARY}{len(selected_titles)}{self.terminal.COLOR_TEXT} titles ({total_aggregate:,.0f}h total)")
+        self.terminal.separator()
+
+        engine = IngestionPipeline(self.fabricator, self.terminal)
+        accepted = engine.execute_stream(
+            selected_titles,
+            lambda title: self.fabricator.assemble_complete_session(title, duration_ms)
+        )
+
+        print()
+        self.terminal.success("completed", f"{accepted}/{len(selected_titles)} titles processed ({accepted * target_hours:,.0f}h total)")
+        self.state.total_games_claimed += accepted
+        self.state.total_hours_claimed += accepted * target_hours
+        self.state.persist()
+        return {
+            "success": True,
+            "accepted": accepted,
+            "total_requested": len(selected_titles),
+            "hours_per_game": target_hours,
+            "total_hours": accepted * target_hours,
+        }
 
     def render_main_menu(self) -> None:
         T = self.terminal
@@ -931,7 +1022,7 @@ class ApplicationController:
             T.log(f"{T.COLOR_PRIMARY}5{T.COLOR_RESET} · Exit")
             T.separator()
 
-            selection = input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} ").strip()
+            selection = safe_input(f"  {T.COLOR_PRIMARY}›{T.COLOR_RESET} ").strip()
             print()
             if selection == "1":
                 self.trigger_playtime_ingestion()
@@ -949,8 +1040,19 @@ class ApplicationController:
 
 
 def execute_entrypoint() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Discord Games Playtime Spoofer & Badge Maximizer")
+    parser.add_argument("--games", type=int, default=None, help="Number of games to farm (e.g. 50)")
+    parser.add_argument("--hours", type=float, default=None, help="Hours per game (e.g. 1.0)")
+    parser.add_argument("--auto", action="store_true", help="Run automated non-interactive ingestion")
+    args, _ = parser.parse_known_args()
+
     try:
-        ApplicationController().start()
+        app = ApplicationController()
+        if args.auto or args.games is not None or args.hours is not None:
+            app.start_headless(games_count=args.games, hours=args.hours)
+        else:
+            app.start()
     except KeyboardInterrupt:
         print()
         TerminalInterface().warning("exit", "Execution halted by user.")
