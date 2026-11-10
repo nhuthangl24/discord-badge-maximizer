@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Discord Badge Maximizer - Discord Application Bot
-Allows controlling stream farming and game playtime spoofing entirely via Slash Commands (/slash).
+Allows controlling stream farming and game playtime spoofing entirely via
+Slash Commands (/slash), Modals (Popup forms), and an Interactive Control Panel.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 import threading
 import time
 import urllib.request
@@ -16,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 import discord
-from discord import app_commands
+from discord import app_commands, ui
 from discord.ext import commands
 
 # Import core engines from existing scripts (keeping 100% original logic intact)
@@ -66,180 +68,325 @@ def mask_token(token: str) -> str:
     return f"`{token[:6]}...{token[-4:]}`"
 
 
-class StreamBot(commands.Bot):
-    def __init__(self) -> None:
-        intents = discord.Intents.default()
-        super().__init__(command_prefix="!", intents=intents)
-        self.active_engine: Optional[GatewayStreamEngine] = None
-        self.stream_thread: Optional[threading.Thread] = None
-        self.stream_lock = threading.Lock()
-        self.session_started_at: float = 0.0
+# ==========================================
+# 1. DISCORD MODALS (POPUP FORMS)
+# ==========================================
 
-    async def setup_hook(self) -> None:
-        # Sync slash commands globally
-        print("[Bot] Đang đồng bộ Slash Commands với Discord...")
-        synced = await self.tree.sync()
-        print(f"[Bot] Đã đồng bộ thành công {len(synced)} lệnh Slash.")
+class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Phụ)"):
+    main_token = ui.TextInput(
+        label="Token Tài khoản Chính (Acc cần cày badge)",
+        placeholder="Dán Discord user token tài khoản chính vào đây...",
+        style=discord.TextStyle.short,
+        required=True,
+        min_length=20,
+    )
+    alt_token = ui.TextInput(
+        label="Token Tài khoản Phụ (Alt Viewer xem stream)",
+        placeholder="Dán token acc phụ để tự động ngồi xem stream (tùy chọn)...",
+        style=discord.TextStyle.short,
+        required=False,
+    )
+    cookie = ui.TextInput(
+        label="Cookie cf_clearance (Dùng để cày giờ game)",
+        placeholder="Dán giá trị cf_clearance cookie header (tùy chọn)...",
+        style=discord.TextStyle.paragraph,
+        required=False,
+    )
+    channel_id = ui.TextInput(
+        label="ID Phòng Voice (Tùy chọn - Bỏ trống = Random)",
+        placeholder="Bỏ trống để bot tự chọn phòng voice ngẫu nhiên...",
+        style=discord.TextStyle.short,
+        required=False,
+    )
+
+    def __init__(self, current_state: State) -> None:
+        super().__init__()
+        if current_state.token:
+            self.main_token.default = current_state.token
+        if current_state.viewer_token:
+            self.alt_token.default = current_state.viewer_token
+        if current_state.cookie:
+            self.cookie.default = current_state.cookie
+        if current_state.last_channel_id:
+            self.channel_id.default = current_state.last_channel_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        state = State.load()
+        state.token = self.main_token.value.strip()
+
+        if self.alt_token.value.strip():
+            state.viewer_token = self.alt_token.value.strip()
+        if self.cookie.value.strip():
+            state.cookie = self.cookie.value.strip()
+        if self.channel_id.value.strip():
+            state.last_channel_id = extract_channel_id(self.channel_id.value.strip())
+
+        state.save()
+
+        # Sync with games.py session state
+        game_state = AccountSessionState.restore()
+        game_state.token = state.token
+        if state.cookie:
+            game_state.cookie = state.cookie
+        game_state.persist()
+
+        embed = discord.Embed(
+            title="✅ Đã cập nhật cấu hình thành công qua Popup!",
+            description="Thông tin tài khoản chính và phụ đã được lưu an toàn.",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Tài khoản chính (Cày badge)", value=mask_token(state.token), inline=True)
+        embed.add_field(name="Tài khoản phụ (Alt Viewer)", value=mask_token(state.viewer_token), inline=True)
+        embed.add_field(name="Clearance Cookie", value="`Đã cấu hình`" if state.has_cookie else "*(Trống)*", inline=True)
+        embed.add_field(
+            name="Phòng Voice",
+            value=f"`{state.last_channel_id}`" if state.last_channel_id else "🎲 *Tự động chọn ngẫu nhiên*",
+            inline=True
+        )
+        embed.set_footer(text="Bây giờ bạn có thể dùng /stream start hoặc bấm nút trên Bảng điều khiển!")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-bot = StreamBot()
-tree = bot.tree
+class MainAccountModal(ui.Modal, title="Cài đặt Tài khoản Chính (Acc cày)"):
+    main_token = ui.TextInput(
+        label="Token Tài khoản Chính",
+        placeholder="Dán token tài khoản chính vào đây...",
+        style=discord.TextStyle.short,
+        required=True,
+        min_length=20,
+    )
+    cookie = ui.TextInput(
+        label="Cookie cf_clearance (Tùy chọn - Cày game)",
+        placeholder="Dán cf_clearance cookie header...",
+        style=discord.TextStyle.paragraph,
+        required=False,
+    )
+
+    def __init__(self, current_state: State) -> None:
+        super().__init__()
+        if current_state.token:
+            self.main_token.default = current_state.token
+        if current_state.cookie:
+            self.cookie.default = current_state.cookie
+
+    async def on_submit(self, interaction: discord.Interaction):
+        state = State.load()
+        state.token = self.main_token.value.strip()
+        if self.cookie.value.strip():
+            state.cookie = self.cookie.value.strip()
+        state.save()
+
+        game_state = AccountSessionState.restore()
+        game_state.token = state.token
+        if state.cookie:
+            game_state.cookie = state.cookie
+        game_state.persist()
+
+        embed = discord.Embed(
+            title="✅ Đã lưu Tài khoản Chính thành công!",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Token Chính", value=mask_token(state.token), inline=True)
+        embed.add_field(name="Cookie", value="`Đã lưu`" if state.has_cookie else "*(Trống)*", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.event
-async def on_ready():
-    print("=" * 55)
-    print(f"  Bot đã online: {bot.user} (ID: {bot.user.id})")
-    print(f"  Mời Bot vào Server của bạn để dùng lệnh /slash")
-    print("=" * 55)
+class AltAccountModal(ui.Modal, title="Cài đặt Tài khoản Phụ (Alt Viewer)"):
+    alt_token = ui.TextInput(
+        label="Token Tài khoản Phụ (Alt Viewer)",
+        placeholder="Dán token tài khoản phụ để auto-view stream (Opcode 20)...",
+        style=discord.TextStyle.short,
+        required=True,
+        min_length=20,
+    )
+
+    def __init__(self, current_state: State) -> None:
+        super().__init__()
+        if current_state.viewer_token:
+            self.alt_token.default = current_state.viewer_token
+
+    async def on_submit(self, interaction: discord.Interaction):
+        state = State.load()
+        state.viewer_token = self.alt_token.value.strip()
+        state.save()
+
+        embed = discord.Embed(
+            title="✅ Đã lưu Tài khoản Phụ (Alt Viewer) thành công!",
+            description="Tài khoản này sẽ tự động tham gia phòng voice và xem stream khi bạn phát.",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Token Phụ", value=mask_token(state.viewer_token), inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class FarmGamesModal(ui.Modal, title="Cày Giờ Chơi Game"):
+    count = ui.TextInput(
+        label="Số lượng Game cần cày",
+        placeholder="Ví dụ: 50 hoặc 100",
+        default="50",
+        style=discord.TextStyle.short,
+        required=True,
+    )
+    hours = ui.TextInput(
+        label="Số giờ cho mỗi Game",
+        placeholder="Ví dụ: 1.0 hoặc 50.0",
+        default="1.0",
+        style=discord.TextStyle.short,
+        required=True,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        state = State.load()
+        if not state.has_token:
+            embed = discord.Embed(
+                title="❌ Chưa có Token tài khoản",
+                description="Vui lòng dùng nút Cài đặt hoặc `/setup` để điền token trước.",
+                color=discord.Color.red(),
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        if not state.has_cookie:
+            embed = discord.Embed(
+                title="❌ Thiếu Cookie cf_clearance",
+                description="Cày giờ game bắt buộc cần cookie `cf_clearance`. Vui lòng cập nhật qua nút Cài đặt hoặc `/setup`.",
+                color=discord.Color.red(),
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        try:
+            target_count = int(self.count.value.strip())
+            target_hours = float(self.hours.value.strip())
+        except ValueError:
+            embed = discord.Embed(
+                title="❌ Dữ liệu không hợp lệ",
+                description="Số lượng game và số giờ phải là số hợp lệ.",
+                color=discord.Color.red(),
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=False)
+
+        controller = ApplicationController()
+        result = await asyncio.to_thread(controller.start_headless, games_count=target_count, hours=target_hours)
+
+        if not result.get("success"):
+            embed = discord.Embed(
+                title="❌ Cày game thất bại",
+                description=f"Lỗi: `{result.get('error')}`",
+                color=discord.Color.red(),
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        fresh_game_state = AccountSessionState.restore()
+        accepted = result.get("accepted", 0)
+        total_req = result.get("total_requested", 0)
+        hours_added = result.get("total_hours", 0.0)
+
+        embed = discord.Embed(
+            title="🎮 Đã cày giờ game thành công!",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Số game đã gửi", value=f"`{accepted}/{total_req}` games", inline=True)
+        embed.add_field(name="Thời gian mỗi game", value=f"`{target_hours:g}h`", inline=True)
+        embed.add_field(name="Tổng số giờ vừa cộng", value=f"`+{hours_added:,.0f}h`", inline=True)
+        embed.add_field(
+            name="Tổng tích lũy hiện tại",
+            value=f"**{fresh_game_state.total_hours_claimed:,.0f}h** trên **{fresh_game_state.total_games_claimed}** games",
+            inline=False
+        )
+        embed.set_footer(text="Lưu ý: Hệ thống Discord Analytics đồng bộ tiến độ badge sau 24-48 giờ.")
+        await interaction.followup.send(embed=embed)
 
 
 # ==========================================
-# 1. AUTHENTICATION & CONFIG SLASH COMMANDS
+# 2. INTERACTIVE CONTROL PANEL VIEW (BUTTONS)
 # ==========================================
 
-@tree.command(name="set_token", description="Cấu hình Token tài khoản phụ (Ẩn danh - Không cần ID phòng)")
-@app_commands.describe(
-    token="Discord User Token của tài khoản phụ cần cày badge",
-    cookie="(Tùy chọn) Cookie cf_clearance (Chỉ cần nếu muốn cày giờ game)",
-    viewer_token="(Tùy chọn) Token tài khoản alt thứ 2 để tự động xem stream",
-    channel_id="(Tùy chọn) Bỏ trống để bot tự động chọn phòng voice ngẫu nhiên",
-    guild_id="(Tùy chọn) Bỏ trống nếu không cần chỉ định server"
-)
-async def set_token_cmd(
+class ControlPanelView(ui.View):
+    def __init__(self, bot_instance: StreamBot) -> None:
+        super().__init__(timeout=None)
+        self.bot_instance = bot_instance
+
+    @ui.button(label="⚙️ Cài đặt Tài khoản (Popup)", style=discord.ButtonStyle.primary, row=0)
+    async def btn_setup(self, interaction: discord.Interaction, button: ui.Button):
+        state = State.load()
+        await interaction.response.send_modal(AllInOneSetupModal(current_state=state))
+
+    @ui.button(label="👤 Cài Acc Phụ (Alt Viewer)", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_alt(self, interaction: discord.Interaction, button: ui.Button):
+        state = State.load()
+        await interaction.response.send_modal(AltAccountModal(current_state=state))
+
+    @ui.button(label="🔴 Bắt đầu Stream (Auto Room)", style=discord.ButtonStyle.success, row=1)
+    async def btn_stream_start(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_start_stream(interaction, channel_id=None, guild_id=None)
+
+    @ui.button(label="⏹️ Dừng Stream", style=discord.ButtonStyle.danger, row=1)
+    async def btn_stream_stop(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_stop_stream(interaction)
+
+    @ui.button(label="📊 Xem Trạng thái", style=discord.ButtonStyle.secondary, row=1)
+    async def btn_stream_status(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_stream_status(interaction)
+
+    @ui.button(label="🎮 Cày Giờ Game (Popup)", style=discord.ButtonStyle.primary, row=2)
+    async def btn_farm_games(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_modal(FarmGamesModal())
+
+    @ui.button(label="🏆 Xem Profile & Badges", style=discord.ButtonStyle.secondary, row=2)
+    async def btn_profile(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_view_profile(interaction)
+
+
+# ==========================================
+# 3. HELPER BUSINESS LOGIC FUNCTIONS
+# ==========================================
+
+async def handle_start_stream(
     interaction: discord.Interaction,
-    token: str,
-    cookie: Optional[str] = None,
-    viewer_token: Optional[str] = None,
     channel_id: Optional[str] = None,
     guild_id: Optional[str] = None,
 ):
-    # Always ephemeral so credentials are never leaked in public server
-    await interaction.response.defer(ephemeral=True)
-
-    state = State.load()
-    state.token = token.strip()
-    if cookie:
-        state.cookie = cookie.strip()
-    if viewer_token:
-        state.viewer_token = viewer_token.strip()
-    if channel_id:
-        state.last_channel_id = extract_channel_id(channel_id.strip())
-    if guild_id:
-        state.last_guild_id = guild_id.strip()
-
-    # Save to session.json
-    state.save()
-
-    # Also sync with games.py session state
-    game_state = AccountSessionState.restore()
-    game_state.token = state.token
-    if cookie:
-        game_state.cookie = state.cookie
-    game_state.persist()
-
-    embed = discord.Embed(
-        title="✅ Đã cập nhật Token & Cấu hình thành công",
-        description="Thông tin tài khoản phụ đã được lưu an toàn vào `session.json` cục bộ.",
-        color=discord.Color.green(),
-    )
-    embed.add_field(name="User Token", value=mask_token(state.token), inline=True)
-    embed.add_field(name="Clearance Cookie", value="`Đã lưu`" if state.has_cookie else "*(Trống)*", inline=True)
-    embed.add_field(name="Alt Viewer Token", value=mask_token(state.viewer_token), inline=True)
-    if state.last_channel_id:
-        embed.add_field(name="Voice Channel ID", value=f"`{state.last_channel_id}`", inline=True)
-    if state.last_guild_id:
-        embed.add_field(name="Guild ID", value=f"`{state.last_guild_id}`", inline=True)
-
-    embed.set_footer(text="Gợi ý: Dùng /stream start để bắt đầu phát stream hoặc /farm_games để cày giờ game!")
-    await interaction.followup.send(embed=embed, ephemeral=True)
-
-
-@tree.command(name="config", description="Xem cấu hình tài khoản phụ hiện tại (Đã che giấu token)")
-async def config_cmd(interaction: discord.Interaction):
-    state = State.load()
-    game_state = AccountSessionState.restore()
-
-    embed = discord.Embed(
-        title="⚙️ Cấu hình hiện tại của Tool",
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(name="Main User Token", value=mask_token(state.token), inline=True)
-    embed.add_field(name="Clearance Cookie", value="`Đã cấu hình`" if state.has_cookie else "*(Chưa có)*", inline=True)
-    embed.add_field(name="Alt Viewer Token", value=mask_token(state.viewer_token), inline=True)
-    embed.add_field(name="Voice Channel Mặc định", value=f"`{state.last_channel_id}`" if state.last_channel_id else "*(Chưa đặt)*", inline=True)
-    embed.add_field(name="Guild ID Mặc định", value=f"`{state.last_guild_id}`" if state.last_guild_id else "*(Chưa đặt)*", inline=True)
-    embed.add_field(name="Tổng giờ Stream đã cày", value=f"**{state.total_stream_hours_claimed:,.1f}h** ({state.total_stream_sessions} phiên)", inline=False)
-    embed.add_field(name="Tổng giờ Game đã cày", value=f"**{game_state.total_hours_claimed:,.0f}h** ({game_state.total_games_claimed} games)", inline=False)
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-@tree.command(name="clear_config", description="Xóa toàn bộ token và cookie đã lưu")
-async def clear_config_cmd(interaction: discord.Interaction):
-    state = State.load()
-    state.token = ""
-    state.cookie = ""
-    state.viewer_token = ""
-    state.analytics_token = ""
-    state.save()
-
-    game_state = AccountSessionState.restore()
-    game_state.token = ""
-    game_state.cookie = ""
-    game_state.analytics_token = ""
-    game_state.persist()
-
-    embed = discord.Embed(
-        title="🗑️ Đã xóa sạch cấu hình",
-        description="Toàn bộ token và cookie đã được reset.",
-        color=discord.Color.orange(),
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-# ==========================================
-# 2. STREAMING SLASH COMMANDS
-# ==========================================
-
-stream_group = app_commands.Group(name="stream", description="Quản lý tính năng Live Stream cày Streaming Badge")
-
-
-@stream_group.command(name="start", description="Bắt đầu phát Live Stream Go Live (Tự động vào phòng random nếu không điền ID)")
-@app_commands.describe(
-    channel_id="ID kênh voice tùy chọn (Bỏ trống = Bot tự chọn phòng random)",
-    guild_id="ID Server tùy chọn"
-)
-async def stream_start(interaction: discord.Interaction, channel_id: Optional[str] = None, guild_id: Optional[str] = None):
     state = State.load()
     if not state.has_token:
         embed = discord.Embed(
-            title="❌ Chưa có Token tài khoản phụ",
-            description="Vui lòng dùng lệnh `/set_token` trước để điền token tài khoản cần cày badge.",
+            title="❌ Chưa có Token tài khoản chính",
+            description="Vui lòng dùng nút **⚙️ Cài đặt Tài khoản** hoặc lệnh `/setup` để điền token trước.",
             color=discord.Color.red(),
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
     with bot.stream_lock:
         if bot.active_engine and bot.active_engine.running:
             embed = discord.Embed(
                 title="⚠️ Đang có phiên Stream chạy rồi!",
-                description="Bot đang phát một luồng stream. Hãy dùng `/stream status` để kiểm tra hoặc `/stream stop` để dừng.",
+                description="Bot đang phát một luồng stream. Dùng nút **📊 Xem Trạng thái** hoặc **⏹️ Dừng Stream**.",
                 color=discord.Color.yellow(),
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-    await interaction.response.defer()
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=False)
 
     session = Session.new()
     try:
         ensure_token(state, session.super_props)
     except Exception as exc:
         embed = discord.Embed(
-            title="❌ Lỗi xác thực tài khoản phụ",
-            description=f"Không thể đồng bộ analytics token từ Discord: `{exc}`\nHãy kiểm tra lại token bằng `/set_token`.",
+            title="❌ Lỗi xác thực tài khoản",
+            description=f"Không thể đồng bộ token với Discord: `{exc}`\nHãy kiểm tra lại token bằng `/setup`.",
             color=discord.Color.red(),
         )
         await interaction.followup.send(embed=embed)
@@ -250,11 +397,10 @@ async def stream_start(interaction: discord.Interaction, channel_id: Optional[st
     selected_name = "Voice Channel"
     is_random = False
 
-    # Auto-pick random voice room if no channel_id specified
+    # Auto-pick random voice room if no channel_id provided
     if not target_cid:
         # Option A: Check voice channels in current Discord server
         if interaction.guild and interaction.guild.voice_channels:
-            import random
             available_vcs = list(interaction.guild.voice_channels)
             if available_vcs:
                 chosen = random.choice(available_vcs)
@@ -263,7 +409,7 @@ async def stream_start(interaction: discord.Interaction, channel_id: Optional[st
                 selected_name = f"#{chosen.name} ({interaction.guild.name})"
                 is_random = True
 
-        # Option B: Discover random voice channel from any server user is in
+        # Option B: Discover random voice channel across all servers user is in
         if not target_cid:
             rcid, rgid, rname = find_random_voice_channel_from_token(state.token, session.super_props)
             if rcid:
@@ -281,7 +427,7 @@ async def stream_start(interaction: discord.Interaction, channel_id: Optional[st
     if not target_cid:
         embed = discord.Embed(
             title="❌ Không tìm thấy phòng Voice nào",
-            description="Tài khoản phụ chưa tham gia server nào có phòng voice khả dụng, hoặc tài khoản thiếu quyền kết nối.",
+            description="Tài khoản chưa tham gia server nào có phòng voice khả dụng, hoặc thiếu quyền kết nối.",
             color=discord.Color.red(),
         )
         await interaction.followup.send(embed=embed)
@@ -304,18 +450,21 @@ async def stream_start(interaction: discord.Interaction, channel_id: Optional[st
 
     embed = discord.Embed(
         title="🎲 Đã tự động vào phòng Voice ngẫu nhiên!" if is_random else "🔴 Đã kích hoạt phát Live Stream Go Live!",
-        description=f"Tài khoản phụ đang kết nối và phát trực tiếp vào phòng voice.",
+        description=f"Tài khoản đang kết nối Gateway và phát trực tiếp vào phòng voice.",
         color=discord.Color.brand_green(),
     )
     embed.add_field(name="Phòng Voice", value=f"`{selected_name}` (`{target_cid}`)", inline=False)
-    embed.add_field(name="Alt Viewer Tự động", value="`Bật (Opcode 20)`" if state.has_viewer_token else "`Tắt (Cần người ngồi xem)`", inline=True)
+    embed.add_field(
+        name="Alt Viewer Tự động",
+        value="`Bật (Opcode 20)`" if state.has_viewer_token else "`Tắt (Cần người ngồi xem)`",
+        inline=True
+    )
     embed.add_field(name="Trạng thái", value="🟢 **Đang phát sóng**", inline=True)
-    embed.set_footer(text="Dùng /stream status để theo dõi hoặc /stream stop để dừng.")
+    embed.set_footer(text="Dùng /stream status hoặc nút Xem Trạng thái để theo dõi.")
     await interaction.followup.send(embed=embed)
 
 
-@stream_group.command(name="stop", description="Dừng phiên phát Live Stream hiện tại và lưu lại số giờ")
-async def stream_stop(interaction: discord.Interaction):
+async def handle_stop_stream(interaction: discord.Interaction):
     with bot.stream_lock:
         engine = bot.active_engine
 
@@ -324,10 +473,14 @@ async def stream_stop(interaction: discord.Interaction):
             title="ℹ️ Không có phiên Stream nào đang chạy",
             color=discord.Color.light_grey(),
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
-    await interaction.response.defer()
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=False)
 
     # Request graceful stop
     engine.stop()
@@ -353,8 +506,7 @@ async def stream_stop(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
 
 
-@stream_group.command(name="status", description="Xem trạng thái phiên phát Stream hiện tại")
-async def stream_status(interaction: discord.Interaction):
+async def handle_stream_status(interaction: discord.Interaction):
     with bot.stream_lock:
         engine = bot.active_engine
         started_at = bot.session_started_at
@@ -366,8 +518,12 @@ async def stream_status(interaction: discord.Interaction):
             title="⚪ Trạng thái: Đang nghỉ (Idle)",
             color=discord.Color.light_grey(),
         )
-        embed.add_field(name="Tổng giờ đã cày", value=f"**{state.total_stream_hours_claimed:,.1f}h** ({state.total_stream_sessions} phiên)", inline=False)
-        embed.set_footer(text="Dùng /stream start để bắt đầu phát!")
+        embed.add_field(
+            name="Tổng giờ đã cày",
+            value=f"**{state.total_stream_hours_claimed:,.1f}h** ({state.total_stream_sessions} phiên)",
+            inline=False
+        )
+        embed.set_footer(text="Dùng /stream start hoặc bấm nút Bắt đầu Stream để phát!")
         await interaction.response.send_message(embed=embed)
         return
 
@@ -387,85 +543,19 @@ async def stream_status(interaction: discord.Interaction):
     embed.add_field(name="Tổng số giờ trọn đời", value=f"`{state.total_stream_hours_claimed + counted_hours:,.1f}h`", inline=False)
 
     if viewers == 0:
-        embed.set_footer(text="⚠️ Cảnh báo: Hiện có 0 người xem. Cần có ít nhất 1 người xem (hoặc Alt Viewer) để giờ stream được tính!")
+        embed.set_footer(text="⚠️ Cảnh báo: Có 0 người xem. Cần ít nhất 1 người xem (hoặc Alt Viewer) để giờ stream được tính!")
     else:
         embed.set_footer(text="✅ Đang tích lũy giờ stream đều đặn!")
 
     await interaction.response.send_message(embed=embed)
 
 
-# ==========================================
-# 3. GAME PLAYTIME SPOOFING SLASH COMMAND
-# ==========================================
-
-@tree.command(name="farm_games", description="Cày thời gian chơi game cho tài khoản phụ (Tăng Game Variety & Badges)")
-@app_commands.describe(
-    count="Số lượng game cần cày (Mặc định: 50)",
-    hours="Số giờ cho mỗi game (Mặc định: 1.0)"
-)
-async def farm_games_cmd(interaction: discord.Interaction, count: int = 50, hours: float = 1.0):
+async def handle_view_profile(interaction: discord.Interaction):
     state = State.load()
     if not state.has_token:
         embed = discord.Embed(
-            title="❌ Chưa có Token tài khoản phụ",
-            description="Vui lòng dùng lệnh `/set_token` trước.",
-            color=discord.Color.red(),
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    if not state.has_cookie:
-        embed = discord.Embed(
-            title="❌ Thiếu Cookie cf_clearance",
-            description="Cày giờ game bắt buộc cần cookie `cf_clearance`. Vui lòng dùng `/set_token cookie:...` để bổ sung.",
-            color=discord.Color.red(),
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    await interaction.response.defer()
-
-    # Run games.py ingestion in a thread pool to avoid blocking asyncio event loop
-    controller = ApplicationController()
-    result = await asyncio.to_thread(controller.start_headless, games_count=count, hours=hours)
-
-    if not result.get("success"):
-        embed = discord.Embed(
-            title="❌ Cày game thất bại",
-            description=f"Lỗi: `{result.get('error')}`",
-            color=discord.Color.red(),
-        )
-        await interaction.followup.send(embed=embed)
-        return
-
-    fresh_game_state = AccountSessionState.restore()
-    accepted = result.get("accepted", 0)
-    total_req = result.get("total_requested", 0)
-    hours_added = result.get("total_hours", 0.0)
-
-    embed = discord.Embed(
-        title="🎮 Đã cày giờ game thành công!",
-        color=discord.Color.green(),
-    )
-    embed.add_field(name="Số game đã gửi", value=f"`{accepted}/{total_req}` games", inline=True)
-    embed.add_field(name="Thời gian mỗi game", value=f"`{hours:g}h`", inline=True)
-    embed.add_field(name="Tổng số giờ vừa cộng", value=f"`+{hours_added:,.0f}h`", inline=True)
-    embed.add_field(name="Tổng tích lũy hiện tại", value=f"**{fresh_game_state.total_hours_claimed:,.0f}h** trên **{fresh_game_state.total_games_claimed}** titles", inline=False)
-    embed.set_footer(text="Lưu ý: Hệ thống Discord Analytics đồng bộ tiến độ badge sau 24-48 giờ.")
-    await interaction.followup.send(embed=embed)
-
-
-# ==========================================
-# 4. PROFILE & BADGES INSPECT SLASH COMMAND
-# ==========================================
-
-@tree.command(name="profile", description="Kiểm tra thông tin tài khoản phụ và danh sách huy hiệu Discord")
-async def profile_cmd(interaction: discord.Interaction):
-    state = State.load()
-    if not state.has_token:
-        embed = discord.Embed(
-            title="❌ Chưa có Token tài khoản phụ",
-            description="Vui lòng dùng lệnh `/set_token` trước.",
+            title="❌ Chưa có Token tài khoản",
+            description="Vui lòng dùng nút Cài đặt hoặc `/setup` để điền token trước.",
             color=discord.Color.red(),
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -548,21 +638,275 @@ async def profile_cmd(interaction: discord.Interaction):
 
 
 # ==========================================
-# 5. HELP SLASH COMMAND
+# 4. BOT CLIENT & SLASH COMMANDS REGISTRATION
 # ==========================================
 
-@tree.command(name="help", description="Xem hướng dẫn toàn bộ lệnh Slash")
+class StreamBot(commands.Bot):
+    def __init__(self) -> None:
+        intents = discord.Intents.default()
+        super().__init__(command_prefix="!", intents=intents)
+        self.active_engine: Optional[GatewayStreamEngine] = None
+        self.stream_thread: Optional[threading.Thread] = None
+        self.stream_lock = threading.Lock()
+        self.session_started_at: float = 0.0
+
+    async def setup_hook(self) -> None:
+        print("[Bot] Đang đồng bộ Slash Commands với Discord...")
+        synced = await self.tree.sync()
+        print(f"[Bot] Đã đồng bộ thành công {len(synced)} lệnh Slash.")
+
+
+bot = StreamBot()
+tree = bot.tree
+
+
+@bot.event
+async def on_ready():
+    print("=" * 60)
+    print(f"  Bot đã online: {bot.user} (ID: {bot.user.id})")
+    print(f"  Mời Bot vào Server và gõ /panel để mở Bảng điều khiển!")
+    print("=" * 60)
+
+
+# --- POPUP MODAL SETUP COMMANDS ---
+
+@tree.command(name="setup", description="Mở Popup cài đặt Tài khoản (Chính & Phụ) trực tiếp trên Discord")
+async def setup_cmd(interaction: discord.Interaction):
+    state = State.load()
+    await interaction.response.send_modal(AllInOneSetupModal(current_state=state))
+
+
+@tree.command(name="set_token", description="Mở Popup cấu hình Token tài khoản chính & phụ")
+async def set_token_cmd(interaction: discord.Interaction):
+    state = State.load()
+    await interaction.response.send_modal(AllInOneSetupModal(current_state=state))
+
+
+@tree.command(name="setup_main", description="Mở Popup cài đặt riêng cho Tài khoản Chính (Acc cày)")
+async def setup_main_cmd(interaction: discord.Interaction):
+    state = State.load()
+    await interaction.response.send_modal(MainAccountModal(current_state=state))
+
+
+@tree.command(name="setup_alt", description="Mở Popup cài đặt riêng cho Tài khoản Phụ (Alt Viewer)")
+async def setup_alt_cmd(interaction: discord.Interaction):
+    state = State.load()
+    await interaction.response.send_modal(AltAccountModal(current_state=state))
+
+
+# --- INTERACTIVE DASHBOARD / PANEL ---
+
+@tree.command(name="panel", description="Mở Bảng Điều Khiển tương tác với các nút bấm trực tiếp")
+async def panel_cmd(interaction: discord.Interaction):
+    state = State.load()
+    game_state = AccountSessionState.restore()
+
+    with bot.stream_lock:
+        is_live = bot.active_engine is not None and bot.active_engine.running
+
+    embed = discord.Embed(
+        title="🎛️ Bảng Điều Khiển Discord Badge Maximizer",
+        description="Quản lý việc cày huy hiệu tài khoản chính và phụ trực tiếp qua các nút bấm bên dưới:",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(name="Tài khoản chính", value=mask_token(state.token), inline=True)
+    embed.add_field(name="Tài khoản phụ (Alt)", value=mask_token(state.viewer_token), inline=True)
+    embed.add_field(name="Clearance Cookie", value="`Đã cấu hình`" if state.has_cookie else "*(Trống)*", inline=True)
+    embed.add_field(
+        name="Trạng thái Stream",
+        value="🔴 **Đang phát Live**" if is_live else "⚪ **Đang nghỉ (Idle)**",
+        inline=True
+    )
+    embed.add_field(
+        name="Tổng giờ Stream đã cày",
+        value=f"**{state.total_stream_hours_claimed:,.1f}h** ({state.total_stream_sessions} phiên)",
+        inline=True
+    )
+    embed.add_field(
+        name="Tổng giờ Game đã cày",
+        value=f"**{game_state.total_hours_claimed:,.0f}h** ({game_state.total_games_claimed} games)",
+        inline=True
+    )
+    embed.set_footer(text="Bấm 'Cài đặt Tài khoản' để mở popup điền token • Bấm 'Bắt đầu Stream' để auto vào room!")
+
+    view = ControlPanelView(bot_instance=bot)
+    await interaction.response.send_message(embed=embed, view=view)
+
+
+# --- STREAM COMMANDS GROUP ---
+
+stream_group = app_commands.Group(name="stream", description="Quản lý tính năng Live Stream cày Streaming Badge")
+
+
+@stream_group.command(name="start", description="Bắt đầu phát Live Stream (Tự động vào phòng random nếu không điền ID)")
+@app_commands.describe(
+    channel_id="ID kênh voice tùy chọn (Bỏ trống = Bot tự chọn phòng random)",
+    guild_id="ID Server tùy chọn"
+)
+async def stream_start_cmd(interaction: discord.Interaction, channel_id: Optional[str] = None, guild_id: Optional[str] = None):
+    await handle_start_stream(interaction, channel_id=channel_id, guild_id=guild_id)
+
+
+@stream_group.command(name="stop", description="Dừng phiên phát Live Stream hiện tại và lưu lại số giờ")
+async def stream_stop_cmd(interaction: discord.Interaction):
+    await handle_stop_stream(interaction)
+
+
+@stream_group.command(name="status", description="Xem trạng thái phiên phát Stream hiện tại")
+async def stream_status_cmd(interaction: discord.Interaction):
+    await handle_stream_status(interaction)
+
+
+# --- GAME PLAYTIME COMMAND ---
+
+@tree.command(name="farm_games", description="Cày thời gian chơi game cho tài khoản (Mở Popup nếu không điền số)")
+@app_commands.describe(
+    count="(Tùy chọn) Số lượng game cần cày (Ví dụ: 50)",
+    hours="(Tùy chọn) Số giờ cho mỗi game (Ví dụ: 1.0)"
+)
+async def farm_games_cmd(interaction: discord.Interaction, count: Optional[int] = None, hours: Optional[float] = None):
+    if count is None and hours is None:
+        await interaction.response.send_modal(FarmGamesModal())
+        return
+
+    target_count = count if count is not None else 50
+    target_hours = hours if hours is not None else 1.0
+
+    state = State.load()
+    if not state.has_token:
+        embed = discord.Embed(
+            title="❌ Chưa có Token tài khoản",
+            description="Vui lòng dùng `/setup` để điền token trước.",
+            color=discord.Color.red(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    if not state.has_cookie:
+        embed = discord.Embed(
+            title="❌ Thiếu Cookie cf_clearance",
+            description="Cày giờ game bắt buộc cần cookie `cf_clearance`. Vui lòng cập nhật qua `/setup`.",
+            color=discord.Color.red(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=False)
+
+    controller = ApplicationController()
+    result = await asyncio.to_thread(controller.start_headless, games_count=target_count, hours=target_hours)
+
+    if not result.get("success"):
+        embed = discord.Embed(
+            title="❌ Cày game thất bại",
+            description=f"Lỗi: `{result.get('error')}`",
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=embed)
+        return
+
+    fresh_game_state = AccountSessionState.restore()
+    accepted = result.get("accepted", 0)
+    total_req = result.get("total_requested", 0)
+    hours_added = result.get("total_hours", 0.0)
+
+    embed = discord.Embed(
+        title="🎮 Đã cày giờ game thành công!",
+        color=discord.Color.green(),
+    )
+    embed.add_field(name="Số game đã gửi", value=f"`{accepted}/{total_req}` games", inline=True)
+    embed.add_field(name="Thời gian mỗi game", value=f"`{target_hours:g}h`", inline=True)
+    embed.add_field(name="Tổng số giờ vừa cộng", value=f"`+{hours_added:,.0f}h`", inline=True)
+    embed.add_field(
+        name="Tổng tích lũy hiện tại",
+        value=f"**{fresh_game_state.total_hours_claimed:,.0f}h** trên **{fresh_game_state.total_games_claimed}** games",
+        inline=False
+    )
+    embed.set_footer(text="Lưu ý: Hệ thống Discord Analytics đồng bộ tiến độ badge sau 24-48 giờ.")
+    await interaction.followup.send(embed=embed)
+
+
+# --- UTILITY COMMANDS ---
+
+@tree.command(name="profile", description="Kiểm tra thông tin tài khoản và danh sách huy hiệu Discord")
+async def profile_cmd(interaction: discord.Interaction):
+    await handle_view_profile(interaction)
+
+
+@tree.command(name="config", description="Xem cấu hình hiện tại (Token đã được che giấu)")
+async def config_cmd(interaction: discord.Interaction):
+    state = State.load()
+    game_state = AccountSessionState.restore()
+
+    embed = discord.Embed(
+        title="⚙️ Cấu hình hiện tại của Tool",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(name="Tài khoản chính (Cày)", value=mask_token(state.token), inline=True)
+    embed.add_field(name="Tài khoản phụ (Viewer)", value=mask_token(state.viewer_token), inline=True)
+    embed.add_field(name="Clearance Cookie", value="`Đã cấu hình`" if state.has_cookie else "*(Chưa có)*", inline=True)
+    embed.add_field(
+        name="Phòng Voice Mặc định",
+        value=f"`{state.last_channel_id}`" if state.last_channel_id else "🎲 *Auto Random*",
+        inline=True
+    )
+    embed.add_field(
+        name="Tổng giờ Stream đã cày",
+        value=f"**{state.total_stream_hours_claimed:,.1f}h** ({state.total_stream_sessions} phiên)",
+        inline=False
+    )
+    embed.add_field(
+        name="Tổng giờ Game đã cày",
+        value=f"**{game_state.total_hours_claimed:,.0f}h** ({game_state.total_games_claimed} games)",
+        inline=False
+    )
+    embed.set_footer(text="Gợi ý: Dùng /panel để mở Bảng Điều Khiển với các nút bấm tiện lợi!")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="clear_config", description="Xóa toàn bộ token và cookie đã lưu")
+async def clear_config_cmd(interaction: discord.Interaction):
+    state = State.load()
+    state.token = ""
+    state.cookie = ""
+    state.viewer_token = ""
+    state.analytics_token = ""
+    state.save()
+
+    game_state = AccountSessionState.restore()
+    game_state.token = ""
+    game_state.cookie = ""
+    game_state.analytics_token = ""
+    game_state.persist()
+
+    embed = discord.Embed(
+        title="🗑️ Đã xóa sạch cấu hình",
+        description="Toàn bộ token và cookie đã được reset.",
+        color=discord.Color.orange(),
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="help", description="Xem hướng dẫn toàn bộ lệnh và Bảng điều khiển")
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
         title="📖 Hướng dẫn sử dụng Bot Badge Maximizer",
-        description="Toàn bộ thao tác đều được điều khiển trực tiếp qua các lệnh Slash (/):",
+        description="Bạn có thể dùng lệnh Slash (/) hoặc mở Bảng Điều Khiển bằng nút bấm:",
         color=discord.Color.blue(),
     )
     embed.add_field(
-        name="🔑 Thiết lập & Cấu hình",
+        name="🎛️ Bảng Điều Khiển Trực Quan",
+        value="`/panel` - Mở Bảng điều khiển có sẵn các nút bấm (Cài đặt, Bắt đầu stream, Dừng stream...)",
+        inline=False
+    )
+    embed.add_field(
+        name="🔑 Cài đặt Tài khoản (Popup Modal)",
         value=(
-            "`/set_token` - Nhập Token acc phụ, cookie, alt viewer (Chỉ mình bạn thấy)\n"
-            "`/config` - Xem cấu hình hiện tại và số giờ đã cày\n"
+            "`/setup` hoặc `/set_token` - Mở Popup Form điền token tài khoản chính & phụ\n"
+            "`/setup_main` - Mở Popup cài riêng cho tài khoản chính\n"
+            "`/setup_alt` - Mở Popup cài riêng cho tài khoản phụ (Alt Viewer)\n"
+            "`/config` - Xem cấu hình hiện tại và tổng số giờ đã cày\n"
             "`/clear_config` - Xóa thông tin token khỏi bot"
         ),
         inline=False
@@ -570,7 +914,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(
         name="🔴 Cày Streaming Badge",
         value=(
-            "`/stream start [channel_id]` - Bắt đầu Live Stream vào phòng voice\n"
+            "`/stream start` - Tự động tìm phòng voice ngẫu nhiên và phát Live Stream\n"
             "`/stream stop` - Dừng phát stream và lưu lại số giờ\n"
             "`/stream status` - Xem thời gian đã stream và số lượng viewer"
         ),
@@ -579,17 +923,17 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(
         name="🎮 Cày Game Playtime & Profile",
         value=(
-            "`/farm_games [count] [hours]` - Cày playtime cho nhiều game tự động\n"
-            "`/profile` - Kiểm tra huy hiệu hiện có trên tài khoản phụ"
+            "`/farm_games` - Mở Popup hoặc chạy cày playtime cho nhiều game tự động\n"
+            "`/profile` - Kiểm tra huy hiệu hiện có trên tài khoản"
         ),
         inline=False
     )
-    embed.set_footer(text="Discord Badge Maximizer · All-in-One Bot Control")
+    embed.set_footer(text="Discord Badge Maximizer · All-in-One Bot Control with Modals")
     await interaction.response.send_message(embed=embed)
 
 
 # ==========================================
-# MAIN RUNNER
+# 5. MAIN RUNNER
 # ==========================================
 
 def run_bot() -> None:

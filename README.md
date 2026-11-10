@@ -87,11 +87,14 @@ Khi thấy dòng `[Bot] Đã đồng bộ thành công 8 lệnh Slash. Bot đã 
 
 | Lệnh Slash | Chức năng | Chi tiết |
 | :--- | :--- | :--- |
-| **`/set_token`** | **Điền Token tài khoản phụ** | Nhập `token:<token_acc_phu>`, tùy chọn cookie `cf_clearance` hoặc token alt viewer. *(Lệnh này bảo mật `ephemeral=True`, chỉ duy nhất bạn nhìn thấy)*. |
+| **`/panel`** | **Bảng Điều Khiển Nút Bấm** | Mở Dashboard có sẵn các nút bấm trực tiếp: Cài đặt Popup, Bật/Dừng Stream, Cày Game... |
+| **`/setup`** | **Mở Popup Cài đặt Tài khoản** | **Hiện cửa sổ Popup (Modal) trên Discord** để điền Token tài khoản chính & phụ, cookie, phòng voice mà không lộ tin nhắn. |
+| **`/setup_main`** | **Popup Tài khoản Chính** | Cửa sổ Popup cài đặt riêng cho tài khoản chính (Acc cày). |
+| **`/setup_alt`** | **Popup Tài khoản Phụ** | Cửa sổ Popup cài đặt riêng cho tài khoản phụ (Alt Viewer xem stream). |
 | **`/stream start`** | **Bắt đầu phát Live Stream** | **Không cần nhập ID phòng!** Bot sẽ tự động tìm và bốc ngẫu nhiên một phòng voice có sẵn để vào phát trực tiếp ngay. |
 | **`/stream stop`** | **Dừng Live Stream** | Dừng phát stream và lưu lại tổng số giờ đã cày vào thống kê. |
 | **`/stream status`** | **Xem trạng thái Stream** | Xem thời gian đã phát phiên hiện tại, số người xem (viewers), và tổng số giờ trọn đời. |
-| **`/farm_games`** | **Cày thời gian chơi Game** | Tự động giả lập thời gian chơi game hàng loạt (`count` số lượng game, `hours` số giờ mỗi game). |
+| **`/farm_games`** | **Cày thời gian chơi Game** | Mở Popup chọn số lượng game và số giờ để cày tự động. |
 | **`/profile`** | **Xem Huy hiệu tài khoản** | Hiển thị thông tin acc phụ cùng danh sách các huy hiệu Discord hiện có. |
 | **`/config`** | **Xem cấu hình đã lưu** | Xem lại thông tin cấu hình hiện tại (token được che bằng dấu `***`). |
 | **`/clear_config`** | **Xóa dữ liệu cấu hình** | Xóa toàn bộ token và cookie đã lưu trong máy. |
