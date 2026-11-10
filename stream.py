@@ -89,10 +89,19 @@ if _to_add:
 
 
 def find_ffmpeg_binary() -> str:
-    """Finds the ffmpeg executable across standard PATH and common Homebrew/Linux locations."""
+    """Finds the ffmpeg executable across system PATH, Homebrew, Linux locations, and imageio_ffmpeg."""
     found = shutil.which("ffmpeg")
     if found:
         return found
+
+    # Check bundled python imageio-ffmpeg if available
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.isfile(exe):
+            return exe
+    except Exception:
+        pass
 
     binary_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
     for d in _common_bin_dirs:
@@ -103,6 +112,20 @@ def find_ffmpeg_binary() -> str:
     local_candidate = ROOT / binary_name
     if local_candidate.is_file() and os.access(local_candidate, os.X_OK):
         return str(local_candidate)
+
+    # Auto-fallback: attempt on-the-fly install of imageio-ffmpeg wheel
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "imageio-ffmpeg"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.isfile(exe):
+            return exe
+    except Exception:
+        pass
 
     return "ffmpeg"
 
