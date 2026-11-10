@@ -58,6 +58,22 @@ ROOT = Path(__file__).resolve().parent
 USER_DATA_DIR = ROOT / "data" / "users"
 USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# Auto-expand system PATH to ensure ffmpeg in Homebrew/local paths is found
+_common_bin_dirs = [
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    str(Path.home() / ".local" / "bin"),
+    str(Path.home() / "bin"),
+]
+_sep = ";" if sys.platform == "win32" else ":"
+_cur_path = os.environ.get("PATH", "")
+_to_add = [d for d in _common_bin_dirs if os.path.isdir(d) and d not in _cur_path]
+if _to_add:
+    os.environ["PATH"] = _sep.join(_to_add) + _sep + _cur_path
+
 # Load environment variables from .env
 def _load_env_file(path: Path) -> None:
     if not path.exists():

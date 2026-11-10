@@ -71,6 +71,41 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 STATE_FILE = ROOT / "session.json"
 
+# Auto-expand system PATH to ensure ffmpeg and other tools in Homebrew/local paths are found
+_common_bin_dirs = [
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    str(Path.home() / ".local" / "bin"),
+    str(Path.home() / "bin"),
+]
+_sep = ";" if sys.platform == "win32" else ":"
+_cur_path = os.environ.get("PATH", "")
+_to_add = [d for d in _common_bin_dirs if os.path.isdir(d) and d not in _cur_path]
+if _to_add:
+    os.environ["PATH"] = _sep.join(_to_add) + _sep + _cur_path
+
+
+def find_ffmpeg_binary() -> str:
+    """Finds the ffmpeg executable across standard PATH and common Homebrew/Linux locations."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+
+    binary_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    for d in _common_bin_dirs:
+        candidate = Path(d) / binary_name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
+    local_candidate = ROOT / binary_name
+    if local_candidate.is_file() and os.access(local_candidate, os.X_OK):
+        return str(local_candidate)
+
+    return "ffmpeg"
+
 
 def _load_env_file(filepath: Path) -> None:
     if filepath.is_file():
@@ -623,8 +658,9 @@ class MediaStreamPump:
                 except Exception:
                     pass
             self.running = True
+            ffmpeg_bin = find_ffmpeg_binary()
             v_cmd = [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                ffmpeg_bin, "-hide_banner", "-loglevel", "error",
                 "-stream_loop", "-1", "-i", self.video_path,
                 "-r", "30",
                 "-vf", "scale=848:480",
@@ -641,7 +677,7 @@ class MediaStreamPump:
                 "-an", "-f", "h264", "pipe:1"
             ]
             a_cmd = [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                ffmpeg_bin, "-hide_banner", "-loglevel", "error",
                 "-stream_loop", "-1", "-i", self.video_path,
                 "-vn", "-c:a", "libopus", "-ar", "48000", "-ac", "2", "-b:a", "64k",
                 "-frame_duration", "20",
