@@ -2303,9 +2303,14 @@ class GatewayStreamEngine:
 
         attempts = 0
         backoff = 3
+        max_reconnect_attempts = 10
         while self.running:
             attempts += 1
-            C.warn("gateway", f"reconnecting to gateway in {backoff}s (attempt {attempts})...")
+            if attempts > max_reconnect_attempts:
+                C.err("gateway", f"reconnect failed after {max_reconnect_attempts} attempts — stopping session to prevent zombie loop and saving accumulated hours.")
+                self.running = False
+                return False
+            C.warn("gateway", f"reconnecting to gateway in {backoff}s (attempt {attempts}/{max_reconnect_attempts})...")
             for _ in range(backoff * 10):
                 if not self.running:
                     return False

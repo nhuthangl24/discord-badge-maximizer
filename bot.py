@@ -654,6 +654,51 @@ class AdminPanelView(ui.View):
         except discord.NotFound:
             pass
 
+    @ui.button(label="🧹 Dọn Luồng Treo (Prune)", style=discord.ButtonStyle.secondary, row=1, custom_id="admin_btn_prune")
+    async def btn_prune(self, interaction: discord.Interaction, button: ui.Button):
+        try:
+            if not is_admin(interaction.user.id):
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+                return await interaction.followup.send("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            pruned = prune_disconnected_streams()
+            embed = discord.Embed(
+                title="🧹 [Admin] Đã dọn dẹp các luồng Stream bị treo / Reconnecting!",
+                description=(
+                    f"Đã dừng và dọn sạch **{pruned}** luồng bị mất kết nối.\n\n"
+                    f"🟢 **Tất cả các luồng đang phát (LIVE) của các user khác vẫn tiếp tục chạy 100% bình thường!**"
+                ),
+                color=discord.Color.green(),
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.NotFound:
+            pass
+
+    @ui.button(label="🔄 Stream Lại Tất Cả Users", style=discord.ButtonStyle.success, row=1, custom_id="admin_btn_restart_all")
+    async def btn_restart_all(self, interaction: discord.Interaction, button: ui.Button):
+        try:
+            if not is_admin(interaction.user.id):
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+                return await interaction.followup.send("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            success, failed = await asyncio.to_thread(restart_all_users_streams)
+            embed = discord.Embed(
+                title=f"🔄 [Admin] Kết Quả Stream Lại Cho Tất Cả Users ({len(success)} thành công)",
+                color=discord.Color.green() if success else discord.Color.red(),
+            )
+            if success:
+                embed.add_field(name=f"✅ Đã kết nối & phát sóng ({len(success)} users)", value="\n".join(success[:20]), inline=False)
+            if failed:
+                embed.add_field(name=f"⚠️ Không thể phát ({len(failed)} users)", value="\n".join(failed[:15]), inline=False)
+            embed.set_footer(text=f"Admin: {PRIMARY_ADMIN_ID} · Dùng /admin list để kiểm tra chi tiết.")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.NotFound:
+            pass
+
     @ui.button(label="🛑 Dừng Tất Cả (Stop All)", style=discord.ButtonStyle.danger, row=1, custom_id="admin_btn_stop_all")
     async def btn_stop_all(self, interaction: discord.Interaction, button: ui.Button):
         try:
@@ -1126,9 +1171,15 @@ def build_admin_stream_list_embed() -> discord.Embed:
             v_cnt = eng.get_viewer_count()
             secs = eng.counted_stream_seconds
             media_info = "YouTube URL" if getattr(eng.state, "stream_url", None) else "Video Loop"
+            if eng.stream_connected:
+                status_badge = "🟢 **LIVE**"
+            elif eng.voice_connected:
+                status_badge = "⏳ **Bắt đầu stream**"
+            else:
+                status_badge = "⚠️ **Mất kết nối (Reconnecting)**"
             lines.append(
                 f"• <@{uid}> (`{uid}`):\n"
-                f"  └ Kênh: `#{eng.channel_name}` (`{eng.channel_id}`) | 👀 {v_cnt} viewers | ⏱️ {format_timer(secs)} | 📺 {media_info}"
+                f"  └ Kênh: `#{eng.channel_name}` (`{eng.channel_id}`) | {status_badge} | 👀 {v_cnt} viewers | ⏱️ {format_timer(secs)} | 📺 {media_info}"
             )
 
     embed = discord.Embed(
@@ -1136,7 +1187,7 @@ def build_admin_stream_list_embed() -> discord.Embed:
         description="\n\n".join(lines) if lines else "Không có luồng nào đang chạy.",
         color=discord.Color.gold(),
     )
-    embed.set_footer(text=f"Admin ID: {PRIMARY_ADMIN_ID} · Dùng /admin stop <user> để dừng.")
+    embed.set_footer(text=f"Admin ID: {PRIMARY_ADMIN_ID} · Dùng /admin stop <user> hoặc /admin prune.")
     return embed
 
 
@@ -1200,6 +1251,29 @@ def stop_all_streams() -> int:
                 bot.stream_threads.pop(uid, None)
                 bot.session_started_at.pop(uid, None)
     return count
+
+
+def prune_disconnected_streams() -> int:
+    """Stops and clears any streams that have lost connection or are stuck reconnecting.
+    Active LIVE streams (stream_connected=True) are strictly protected and untouched.
+    """
+    with bot.stream_lock:
+        uids = list(bot.active_engines.keys())
+
+    pruned = 0
+    for uid in uids:
+        with bot.stream_lock:
+            engine = bot.active_engines.get(uid)
+        if engine:
+            is_dead = (not engine.running) or (not engine.stream_connected)
+            if is_dead:
+                engine.stop()
+                pruned += 1
+                with bot.stream_lock:
+                    bot.active_engines.pop(uid, None)
+                    bot.stream_threads.pop(uid, None)
+                    bot.session_started_at.pop(uid, None)
+    return pruned
 
 
 @bot.event
@@ -1377,6 +1451,24 @@ async def admin_stop_all_cmd(interaction: discord.Interaction):
         color=discord.Color.red(),
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@admin_group.command(name="prune", description="Dọn dẹp các luồng stream bị rớt mạng/treo reconnecting mà giữ nguyên các luồng LIVE")
+async def admin_prune_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+    pruned = prune_disconnected_streams()
+    embed = discord.Embed(
+        title="🧹 [Admin] Đã dọn dẹp các luồng Stream bị treo / Reconnecting!",
+        description=(
+            f"Đã dừng và dọn sạch **{pruned}** luồng bị mất kết nối.\n\n"
+            f"🟢 **Tất cả các luồng đang phát (LIVE) của các user khác vẫn tiếp tục chạy 100% bình thường, không bị gián đoạn!**"
+        ),
+        color=discord.Color.green(),
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @admin_group.command(name="stats", description="Xem thống kê toàn bộ hệ thống (Tổng user, tổng giờ, luồng chạy)")
