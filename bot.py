@@ -95,34 +95,89 @@ _load_env_file(ROOT / ".env")
 
 
 # ==========================================
-# MULTI-USER STORAGE & HELPERS
+# MULTI-USER STORAGE & SECURITY CLEANSE
 # ==========================================
+
+def _cleanse_contaminated_data() -> None:
+    """
+    Purges any user state files that were accidentally infected by legacy session.json,
+    and moves session.json away so it can never be read or leak tokens again.
+    """
+    legacy_file = ROOT / "session.json"
+    leaked_tokens = set()
+    if legacy_file.exists():
+        try:
+            raw = json.loads(legacy_file.read_text(encoding="utf-8"))
+            for k in ("token", "viewer_token"):
+                v = raw.get(k, "").strip()
+                if v:
+                    leaked_tokens.add(v)
+        except Exception:
+            pass
+        try:
+            legacy_file.rename(ROOT / "session.json.contaminated.bak")
+            print("🔒 [SECURITY] Đã di chuyển legacy session.json sang session.json.contaminated.bak để tránh lộ token.")
+        except Exception:
+            pass
+
+    # 1. Purge any user files that share the exact leaked token or contaminated test state
+    if USER_DATA_DIR.exists():
+        for f in USER_DATA_DIR.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                tok = data.get("token", "").strip()
+                vtok = data.get("viewer_token", "").strip()
+                cid = data.get("last_channel_id", "").strip()
+                if (tok and tok in leaked_tokens) or (vtok and vtok in leaked_tokens) or (cid == "1569650159191588979"):
+                    f.unlink(missing_ok=True)
+                    print(f"🔒 [SECURITY] Đã xóa file cấu hình nhiễm token cũ: {f.name}")
+            except Exception:
+                pass
+
+        # 2. Detect duplicate tokens across multiple user IDs (impossible in real multi-user, sign of contamination)
+        token_to_files = {}
+        for f in USER_DATA_DIR.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                tok = data.get("token", "").strip()
+                if tok:
+                    token_to_files.setdefault(tok, []).append(f)
+            except Exception:
+                pass
+
+        for tok, files in token_to_files.items():
+            if len(files) > 1:
+                for f in files:
+                    f.unlink(missing_ok=True)
+                    print(f"🔒 [SECURITY] Đã xóa file trùng lặp token (bị nhiễm): {f.name}")
+
+_cleanse_contaminated_data()
+
 
 def get_user_state_file(user_id: int) -> Path:
     return USER_DATA_DIR / f"{user_id}.json"
 
 
 def get_user_state(user_id: int) -> State:
-    """Loads state for a specific Discord user ID."""
+    """
+    Loads state for a specific Discord user ID.
+    GUARANTEE: 100% isolated per Discord user ID.
+    Never falls back to session.json, .env, or another user's credentials.
+    """
     p = get_user_state_file(user_id)
     if not p.exists():
-        # Check if legacy session.json exists and migrate for first user
-        legacy_file = ROOT / "session.json"
-        if legacy_file.exists():
-            try:
-                legacy_state = State.load(legacy_file)
-                if legacy_state.token:
-                    legacy_state._filepath = p
-                    legacy_state.save()
-                    return legacy_state
-            except Exception:
-                pass
-    return State.load(p)
+        state = State()
+        state._filepath = p
+        return state
+    state = State.load(p)
+    state._filepath = p
+    return state
 
 
 def save_user_state(user_id: int, state: State) -> None:
-    """Saves state for a specific Discord user ID."""
+    """Saves state strictly for a specific Discord user ID."""
     p = get_user_state_file(user_id)
+    state._filepath = p
     state.save(p)
 
 
@@ -208,7 +263,7 @@ class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Ph�
         game_state.token = state.token
         if state.cookie:
             game_state.cookie = state.cookie
-        game_state.persist()
+        game_state.persist(user_file)
 
         embed = discord.Embed(
             title="✅ Đã cập nhật cấu hình thành công qua Popup!",
@@ -315,7 +370,7 @@ class MainAccountModal(ui.Modal, title="Cài đặt Tài khoản Chính (Acc cà
         game_state.token = state.token
         if state.cookie:
             game_state.cookie = state.cookie
-        game_state.persist()
+        game_state.persist(user_file)
 
         embed = discord.Embed(
             title="✅ Đã lưu Tài khoản Chính thành công!",
