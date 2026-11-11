@@ -542,6 +542,11 @@ class ControlPanelView(ui.View):
         super().__init__(timeout=None)
         self.bot_instance = bot_instance
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: ui.Item[Any]) -> None:
+        if isinstance(error, discord.NotFound) and getattr(error, "code", None) == 10062:
+            return
+        print(f"[ControlPanelView Error in {item}] {error}")
+
     @ui.button(label="⚙️ Cài đặt Tài khoản (Popup)", style=discord.ButtonStyle.primary, row=0, custom_id="panel_btn_setup")
     async def btn_setup(self, interaction: discord.Interaction, button: ui.Button):
         state = get_user_state(interaction.user.id)
@@ -579,59 +584,94 @@ class ControlPanelView(ui.View):
 
     @ui.button(label="👑 Quản trị Bot (Admin)", style=discord.ButtonStyle.secondary, row=2, custom_id="panel_btn_admin")
     async def btn_admin(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_admin(interaction.user.id):
-            embed = discord.Embed(
-                title="⛔ Truy cập bị từ chối",
-                description=f"Bạn không có quyền Admin ({PRIMARY_ADMIN_ID}) để truy cập bảng điều khiển này!",
-                color=discord.Color.red(),
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
+        try:
+            if not is_admin(interaction.user.id):
+                embed = discord.Embed(
+                    title="⛔ Truy cập bị từ chối",
+                    description=f"Bạn không có quyền Admin ({PRIMARY_ADMIN_ID}) để truy cập bảng điều khiển này!",
+                    color=discord.Color.red(),
+                )
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(embed=embed, ephemeral=True)
+                else:
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                return
 
-        embed = discord.Embed(
-            title="👑 Bảng Quản Trị Hệ Thống (Dành Cho Admin)",
-            description=(
-                f"Xin chào <@{interaction.user.id}>! Bạn đang đăng nhập với quyền **Admin Tối Cao**.\n\n"
-                "• **📋 Xem Luồng Stream**: Giám sát mọi phiên stream đang chạy của tất cả user.\n"
-                "• **📊 Thống Kê Toàn Bộ**: Xem tổng user, tổng số giờ cày stream/game cả hệ thống.\n"
-                "• **🛑 Dừng Toàn Bộ (Emergency)**: Cắt toàn bộ luồng phát sóng ngay lập tức.\n\n"
-                "💡 *Bạn cũng có thể gõ lệnh `/admin stop <user>` hoặc `/admin reset_user <user>`.*"
-            ),
-            color=discord.Color.gold(),
-        )
-        view = AdminPanelView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+
+            embed = discord.Embed(
+                title="👑 Bảng Quản Trị Hệ Thống (Dành Cho Admin)",
+                description=(
+                    f"Xin chào <@{interaction.user.id}>! Bạn đang đăng nhập với quyền **Admin Tối Cao**.\n\n"
+                    "• **📋 Xem Luồng Stream**: Giám sát mọi phiên stream đang chạy của tất cả user.\n"
+                    "• **📊 Thống Kê Toàn Bộ**: Xem tổng user, tổng số giờ cày stream/game cả hệ thống.\n"
+                    "• **🛑 Dừng Toàn Bộ (Emergency)**: Cắt toàn bộ luồng phát sóng ngay lập tức.\n\n"
+                    "💡 *Bạn cũng có thể gõ lệnh `/admin stop <user>` hoặc `/admin reset_user <user>`.*"
+                ),
+                color=discord.Color.gold(),
+            )
+            view = AdminPanelView()
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        except discord.NotFound:
+            pass
 
 
 class AdminPanelView(ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: ui.Item[Any]) -> None:
+        if isinstance(error, discord.NotFound) and getattr(error, "code", None) == 10062:
+            return
+        print(f"[AdminPanelView Error in {item}] {error}")
+
     @ui.button(label="📋 Xem Tất Cả Luồng Stream", style=discord.ButtonStyle.primary, row=0, custom_id="admin_btn_list")
     async def btn_list(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_admin(interaction.user.id):
-            return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
-        embed = build_admin_stream_list_embed()
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        try:
+            if not is_admin(interaction.user.id):
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+                return await interaction.followup.send("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            embed = build_admin_stream_list_embed()
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.NotFound:
+            pass
 
     @ui.button(label="📊 Thống Kê Toàn Bộ Bot", style=discord.ButtonStyle.secondary, row=0, custom_id="admin_btn_stats")
     async def btn_stats(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_admin(interaction.user.id):
-            return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
-        embed = build_admin_stats_embed()
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        try:
+            if not is_admin(interaction.user.id):
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+                return await interaction.followup.send("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            embed = build_admin_stats_embed()
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.NotFound:
+            pass
 
     @ui.button(label="🛑 Dừng Tất Cả (Stop All)", style=discord.ButtonStyle.danger, row=1, custom_id="admin_btn_stop_all")
     async def btn_stop_all(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_admin(interaction.user.id):
-            return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
-        stopped = stop_all_streams()
-        embed = discord.Embed(
-            title="🛑 [Admin] Đã dừng toàn bộ luồng Stream!",
-            description=f"Đã dừng an toàn **{stopped}** luồng phát sóng trên bot.",
-            color=discord.Color.red(),
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        try:
+            if not is_admin(interaction.user.id):
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+                return await interaction.followup.send("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            stopped = stop_all_streams()
+            embed = discord.Embed(
+                title="🛑 [Admin] Đã dừng toàn bộ luồng Stream!",
+                description=f"Đã dừng an toàn **{stopped}** luồng phát sóng trên bot.",
+                color=discord.Color.red(),
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.NotFound:
+            pass
 
 
 # ==========================================
@@ -1053,6 +1093,8 @@ class StreamBot(commands.Bot):
         self.active_farm_threads: dict[int, threading.Thread] = {}
 
     async def setup_hook(self) -> None:
+        self.add_view(ControlPanelView(self))
+        self.add_view(AdminPanelView())
         print("[Bot] Đang đồng bộ Slash Commands với Discord...")
         synced = await self.tree.sync()
         print(f"[Bot] Đã đồng bộ thành công {len(synced)} lệnh Slash.")
