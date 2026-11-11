@@ -2081,6 +2081,11 @@ class GatewayStreamEngine:
         if not hasattr(self, "counted_stream_seconds") or self.counted_stream_seconds is None:
             self.counted_stream_seconds = 0.0
         self.user_id = _user_id_from_token(self.state.token) or ""
+        self.gateway_session_id = None
+        self.sequence = None
+        self.stream_key = ""
+        self.voice_connected = False
+        self.stream_connected = False
         self.stream_ever_active = False
         self._stream_recreate_attempts = 0
         self._user_left_vc = False
@@ -2270,6 +2275,7 @@ class GatewayStreamEngine:
         self._cleanup(self.guild_id)
 
     def _status_display(self) -> None:
+        reconnecting_ticks = 0
         while self.running and not self.stopped_by_user:
             time.sleep(10)
             if not self.running or self.stopped_by_user:
@@ -2278,6 +2284,7 @@ class GatewayStreamEngine:
             timer_str = format_timer(self.counted_stream_seconds)
             viewers = self.get_viewer_count()
             if self.stream_connected:
+                reconnecting_ticks = 0
                 if viewers > 0:
                     lbl = f"{viewers} viewer" if viewers == 1 else f"{viewers} viewers"
                     status = f"{self.console.MAGENTA}🔴 LIVE ({lbl}){self.console.RESET}"
@@ -2286,11 +2293,23 @@ class GatewayStreamEngine:
                     status = f"{self.console.YELLOW}⚠️ LIVE (0 VIEWERS: PAUSED){self.console.RESET}"
                     self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted {self.console.GREY}(accumulation paused - waiting for viewer){self.console.RESET}")
             elif self.voice_connected:
+                reconnecting_ticks = 0
                 status = f"{self.console.CYAN}⏳ starting stream{self.console.RESET}"
                 self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted")
             else:
+                reconnecting_ticks += 1
                 status = f"{self.console.YELLOW}⏳ reconnecting{self.console.RESET}"
                 self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted")
+                if reconnecting_ticks >= 4:
+                    self.console.warn("stream", "⚠️  stream/voice connection stuck in reconnecting for 40s — forcing clean re-connection...")
+                    reconnecting_ticks = 0
+                    self.gateway_session_id = None
+                    self.sequence = None
+                    if self.ws:
+                        try:
+                            self.ws.close()
+                        except Exception:
+                            pass
 
             if self.stream_connected and self.stream_key and self.ws and not self.ws.closed:
                 try:
@@ -2339,10 +2358,17 @@ class GatewayStreamEngine:
         backoff = 3
         while self.running and not self.stopped_by_user:
             attempts += 1
-            if attempts > 3:
-                C.info("gateway", "fast-recycling gateway session for a fresh auto-resume connection...")
+            if attempts > 5:
+                # If resume attempts fail repeatedly, clear cached session to force clean identify
+                self.gateway_session_id = None
+                self.sequence = None
+                can_resume = False
+
+            if attempts > 10:
+                C.info("gateway", "max reconnect attempts reached, recycling gateway session...")
                 return False
-            C.warn("gateway", f"reconnecting to gateway in {backoff}s (attempt {attempts}/3)...")
+
+            C.warn("gateway", f"reconnecting to gateway in {backoff}s (attempt {attempts}/10)...")
             for _ in range(backoff * 10):
                 if not self.running or self.stopped_by_user:
                     return False
@@ -2353,11 +2379,10 @@ class GatewayStreamEngine:
                 self.ws.connect()
 
                 hello_msg = None
-                for _ in range(15):
+                for _ in range(20):
                     m = self.ws.recv(timeout=1.0)
                     if isinstance(m, dict) and m.get("op") == "close":
                         code = m.get("code")
-                        reason = m.get("reason", "")
                         if code == 4004:
                             C.err("auth", "fatal gateway authentication failure (code 4004: invalid token)")
                             C.err("auth", "please use Option 4 or 5 in the menu to update your token.")
@@ -2370,19 +2395,18 @@ class GatewayStreamEngine:
 
                 if not hello_msg:
                     C.warn("gateway", "did not receive hello from gateway, retrying...")
-                    self.ws.close()
-                    self.ws = None
+                    if self.ws:
+                        self.ws.close()
+                        self.ws = None
                     backoff = min(15, backoff + 2)
                     continue
 
                 d_hello = hello_msg.get("d", {})
                 self.heartbeat_interval = d_hello.get("heartbeat_interval", 41250) / 1000.0
 
-                self.ws.send(json.dumps({"op": 1, "d": self.sequence}))
-
                 resumed = False
                 if can_resume and self.gateway_session_id and self.sequence is not None:
-                    C.info("attempting to resume gateway session (op 6)...")
+                    C.info("gateway", "attempting to resume gateway session (op 6)...")
                     try:
                         self.ws.send(json.dumps({
                             "op": 6,
@@ -2393,24 +2417,50 @@ class GatewayStreamEngine:
                             },
                         }))
 
-                        res_msg = self.ws.recv(timeout=4.0)
-                        if res_msg:
+                        start_wait = time.time()
+                        while time.time() - start_wait < 5.0:
+                            res_msg = self.ws.recv(timeout=0.5)
+                            if not res_msg:
+                                continue
                             op_res = res_msg.get("op")
                             t_res = res_msg.get("t")
+                            if op_res == 11:
+                                continue  # Heartbeat ACK
                             if op_res == 0 and t_res == "RESUMED":
-                                C.ok("gateway", "session resumed successfully")
+                                C.ok("gateway", "gateway session resumed successfully")
                                 resumed = True
+                                break
                             elif op_res == 9:
-                                C.warn("gateway", "resume failed (invalid session), falling back to identify")
-                                time.sleep(1.0)
-                            elif op_res == 0 and t_res == "READY":
-                                self._handle_dispatch("READY", res_msg.get("d", {}))
-                                resumed = True
-                    except Exception:
+                                resumable = bool(res_msg.get("d"))
+                                C.warn("gateway", f"resume failed: invalid session (resumable={resumable})")
+                                resumed = False
+                                break
+                            elif isinstance(res_msg, dict) and op_res == "close":
+                                C.warn("gateway", f"gateway closed during resume (code {res_msg.get('code')})")
+                                resumed = False
+                                break
+                    except Exception as exc:
+                        C.warn("gateway", f"resume error: {exc}")
                         resumed = False
 
+                    if not resumed:
+                        # DISCORD PROTOCOL RULE: NEVER send Identify (Opcode 2) on a socket
+                        # that already attempted Resume (Opcode 6) — Discord will reject with 4005!
+                        # Close this socket, wipe invalid session ID, and loop to open a fresh socket for Identify!
+                        C.info("gateway", "resume failed or rejected, closing socket for clean identify...")
+                        try:
+                            self.ws.close()
+                        except Exception:
+                            pass
+                        self.ws = None
+                        self.gateway_session_id = None
+                        self.sequence = None
+                        can_resume = False
+                        time.sleep(1.0)
+                        continue
+
                 if not resumed:
-                    C.info("sending identify (op 2)...")
+                    C.info("gateway", "sending identify (op 2)...")
                     self.ws.send(json.dumps({
                         "op": 2,
                         "d": {
@@ -2426,19 +2476,38 @@ class GatewayStreamEngine:
                         },
                     }))
 
-                    test_msg = self.ws.recv(timeout=2.0)
-                    if isinstance(test_msg, dict) and test_msg.get("op") == "close":
-                        code = test_msg.get("code")
-                        if code == 4004:
-                            C.err("auth", "fatal gateway authentication failure (code 4004: invalid token)")
-                            C.err("auth", "please use Option 4 or 5 in the menu to update your token.")
-                            self.running = False
-                            return False
-                    elif isinstance(test_msg, dict) and test_msg.get("op") == 0 and test_msg.get("t") == "READY":
-                        self._handle_dispatch("READY", test_msg.get("d", {}))
-                        resumed = True
+                    ready_ok = False
+                    start_wait = time.time()
+                    while time.time() - start_wait < 8.0:
+                        test_msg = self.ws.recv(timeout=0.5)
+                        if not test_msg:
+                            continue
+                        if isinstance(test_msg, dict) and test_msg.get("op") == "close":
+                            code = test_msg.get("code")
+                            if code == 4004:
+                                C.err("auth", "fatal gateway authentication failure (code 4004: invalid token)")
+                                self.running = False
+                                return False
+                            break
+                        op_m = test_msg.get("op")
+                        t_m = test_msg.get("t")
+                        if op_m == 11:
+                            continue
+                        if op_m == 0 and t_m == "READY":
+                            self._handle_dispatch("READY", test_msg.get("d", {}))
+                            ready_ok = True
+                            break
 
-                if resumed and self.channel_id:
+                    if not ready_ok:
+                        C.warn("gateway", "did not receive READY after identify, retrying...")
+                        if self.ws:
+                            self.ws.close()
+                            self.ws = None
+                        time.sleep(backoff)
+                        backoff = min(15, backoff + 2)
+                        continue
+
+                if self.channel_id:
                     self.ws.send(json.dumps({
                         "op": 4,
                         "d": {
@@ -2506,7 +2575,14 @@ class GatewayStreamEngine:
                         self.running = False
                         break
 
-                    if not self._reconnect():
+                    can_res = True
+                    if code in (4005, 4007, 4009):
+                        # 4005: Already authenticated, 4007: Invalid seq, 4009: Session timeout
+                        self.gateway_session_id = None
+                        self.sequence = None
+                        can_res = False
+
+                    if not self._reconnect(can_resume=can_res):
                         break
                     last_hb = time.time()
                     continue
@@ -2522,8 +2598,6 @@ class GatewayStreamEngine:
                 if op == 10:
                     self.heartbeat_interval = d.get("heartbeat_interval", 41250) / 1000.0
                     last_hb = time.time()
-
-                    self.ws.send(json.dumps({"op": 1, "d": self.sequence}))
 
                     self.ws.send(json.dumps({
                         "op": 2,
@@ -2573,6 +2647,9 @@ class GatewayStreamEngine:
                 elif op == 9:
                     resumable = bool(d)
                     self.console.warn("gateway", f"session invalidated (op 9, resumable={resumable})")
+                    if not resumable:
+                        self.gateway_session_id = None
+                        self.sequence = None
                     if not self._reconnect(can_resume=resumable):
                         break
                     last_hb = time.time()
@@ -2596,6 +2673,7 @@ class GatewayStreamEngine:
             username = user_data.get("username", "?")
             self.user_id = str(user_data.get("id", self.user_id))
             C.ok("auth", f"gateway authenticated ({username})")
+            self.ready_received.set()
 
         elif event_type == "READY_SUPPLEMENTAL":
             guilds = d.get("guilds", [])
