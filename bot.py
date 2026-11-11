@@ -214,32 +214,32 @@ def mask_token(token: str) -> str:
 
 class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Phụ)"):
     main_token = ui.TextInput(
-        label="Token Tài khoản Chính (Acc cần cày badge)",
+        label="Token Chính (Acc cần cày badge)",
         placeholder="Dán Discord user token tài khoản chính vào đây...",
         style=discord.TextStyle.short,
         required=True,
         min_length=20,
     )
     alt_token = ui.TextInput(
-        label="Token Tài khoản Phụ (Alt Viewer xem stream)",
+        label="Token Phụ (Alt Viewer xem stream)",
         placeholder="Dán token acc phụ để tự động ngồi xem stream (tùy chọn)...",
         style=discord.TextStyle.short,
         required=False,
     )
     cookie = ui.TextInput(
-        label="Cookie cf_clearance (Dùng để cày giờ game)",
+        label="Cookie cf_clearance (Cày giờ game)",
         placeholder="Dán giá trị cf_clearance cookie header (tùy chọn)...",
         style=discord.TextStyle.paragraph,
         required=False,
     )
     channel_id = ui.TextInput(
-        label="ID Kênh Voice (Tùy chọn - Bỏ trống = Random)",
+        label="ID Kênh Voice (Bỏ trống = Tự động)",
         placeholder="Dán ID phòng voice để lọc theo ID (Bỏ trống = Auto random)...",
         style=discord.TextStyle.short,
         required=False,
     )
     stream_url = ui.TextInput(
-        label="Link YouTube / Stream URL (Bỏ trống = Mẫu)",
+        label="Link YouTube / URL Video (Bỏ trống = Mẫu)",
         placeholder="https://www.youtube.com/watch?v=... hoặc để trống để lặp video mẫu",
         style=discord.TextStyle.short,
         required=False,
@@ -307,13 +307,13 @@ class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Ph�
 
 class SetStreamSourceModal(ui.Modal, title="Cài đặt Video Stream & Phòng Voice"):
     channel_id = ui.TextInput(
-        label="ID Phòng Voice (Để trống = Tự động Random)",
+        label="ID Phòng Voice (Bỏ trống = Tự động)",
         placeholder="Dán ID phòng voice để lọc theo ID (Bỏ trống = Auto random)...",
         style=discord.TextStyle.short,
         required=False,
     )
     stream_url = ui.TextInput(
-        label="Link YouTube / Stream URL (Để trống = Video mẫu)",
+        label="Link YouTube / URL Video (Bỏ trống = Mẫu)",
         placeholder="https://www.youtube.com/watch?v=... hoặc để trống...",
         style=discord.TextStyle.short,
         required=False,
