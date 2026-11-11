@@ -1381,13 +1381,63 @@ def restart_all_users_streams() -> tuple[list[str], list[str]]:
     return success, failed
 
 
+async def autonomous_stream_supervisor():
+    """Background supervisor that runs continuously every 15 seconds.
+    - Completely automates zombie/disconnected stream detection and cleanups.
+    - Neither Admin nor users need to do anything manually!
+    - Healthy LIVE streams are 100% protected and remain streaming undisturbed.
+    """
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            await asyncio.sleep(15)
+            now = time.time()
+            with bot.stream_lock:
+                uids = list(bot.active_engines.keys())
+
+            for uid in uids:
+                with bot.stream_lock:
+                    eng = bot.active_engines.get(uid)
+                    t = bot.stream_threads.get(uid)
+                    started = bot.session_started_at.get(uid, now)
+
+                if not eng:
+                    continue
+
+                # 1. Thread dead or engine stopped
+                thread_dead = (t is not None and not t.is_alive())
+                engine_stopped = (not eng.running)
+
+                # 2. Engine stuck disconnected (> 45s without stream or voice connection)
+                is_stuck_disconnected = (
+                    not eng.stream_connected
+                    and not eng.voice_connected
+                    and (now - started > 45)
+                )
+
+                if thread_dead or engine_stopped or is_stuck_disconnected:
+                    try:
+                        eng.stop()
+                    except Exception:
+                        pass
+                    with bot.stream_lock:
+                        bot.active_engines.pop(uid, None)
+                        bot.stream_threads.pop(uid, None)
+                        bot.session_started_at.pop(uid, None)
+                    print(f"[AutoSupervisor] Đã tự động thu dọn luồng stream treo của user {uid} (Đã bảo toàn số giờ cày).")
+        except Exception:
+            pass
+
+
 @bot.event
 async def on_ready():
     print("=" * 60)
     print(f"  Bot Multi-User đã online: {bot.user} (ID: {bot.user.id})")
     print(f"  Admin ID: {PRIMARY_ADMIN_ID} (Quyền Quản Trị Tối Cao)")
     print(f"  Gõ /panel để mở Bảng điều khiển tương tác!")
+    print(f"  Chế độ Tự Động Giám Sát & Dọn Luồng (Auto-Supervisor): BẬT (100% Tự Động)")
     print("=" * 60)
+    bot.loop.create_task(autonomous_stream_supervisor())
 
 
 # --- POPUP MODAL SETUP COMMANDS ---

@@ -2236,6 +2236,7 @@ class GatewayStreamEngine:
         self._cleanup(self.guild_id)
 
     def _status_display(self) -> None:
+        reconnect_streak = 0
         while self.running:
             time.sleep(10)
             if not self.running:
@@ -2244,6 +2245,7 @@ class GatewayStreamEngine:
             timer_str = format_timer(self.counted_stream_seconds)
             viewers = self.get_viewer_count()
             if self.stream_connected:
+                reconnect_streak = 0
                 if viewers > 0:
                     lbl = f"{viewers} viewer" if viewers == 1 else f"{viewers} viewers"
                     status = f"{self.console.MAGENTA}🔴 LIVE ({lbl}){self.console.RESET}"
@@ -2252,11 +2254,17 @@ class GatewayStreamEngine:
                     status = f"{self.console.YELLOW}⚠️ LIVE (0 VIEWERS: PAUSED){self.console.RESET}"
                     self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted {self.console.GREY}(accumulation paused - waiting for viewer){self.console.RESET}")
             elif self.voice_connected:
+                reconnect_streak = 0
                 status = f"{self.console.CYAN}⏳ starting stream{self.console.RESET}"
                 self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted")
             else:
+                reconnect_streak += 1
                 status = f"{self.console.YELLOW}⏳ reconnecting{self.console.RESET}"
                 self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted")
+                if reconnect_streak >= 5:
+                    self.console.warn("stream", "session disconnected for >50s — auto-stopping and saving hours to prevent zombie process.")
+                    self.running = False
+                    break
 
             if self.stream_connected and self.stream_key and self.ws and not self.ws.closed:
                 try:
@@ -2552,6 +2560,8 @@ class GatewayStreamEngine:
                 if not self._reconnect():
                     break
                 last_hb = time.time()
+
+        self.running = False
 
     def _handle_dispatch(self, event_type: str, d: dict) -> None:
         C = self.console
