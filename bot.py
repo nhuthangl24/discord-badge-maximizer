@@ -606,8 +606,9 @@ class ControlPanelView(ui.View):
                     f"Xin chào <@{interaction.user.id}>! Bạn đang đăng nhập với quyền **Admin Tối Cao**.\n\n"
                     "• **📋 Xem Luồng Stream**: Giám sát mọi phiên stream đang chạy của tất cả user.\n"
                     "• **📊 Thống Kê Toàn Bộ**: Xem tổng user, tổng số giờ cày stream/game cả hệ thống.\n"
+                    "• **🔄 Stream Lại Tất Cả**: Khởi động lại stream cho toàn bộ người dùng đã cài đặt token.\n"
                     "• **🛑 Dừng Toàn Bộ (Emergency)**: Cắt toàn bộ luồng phát sóng ngay lập tức.\n\n"
-                    "💡 *Bạn cũng có thể gõ lệnh `/admin stop <user>` hoặc `/admin reset_user <user>`.*"
+                    "💡 *Bạn cũng có thể gõ lệnh `/admin restart_all` hoặc `/admin stop <user>`.*"
                 ),
                 color=discord.Color.gold(),
             )
@@ -1276,6 +1277,110 @@ def prune_disconnected_streams() -> int:
     return pruned
 
 
+def restart_all_users_streams() -> tuple[list[str], list[str]]:
+    """
+    Restarts/starts streaming for all configured users in USER_DATA_DIR.
+    Returns: (success_list, failed_list)
+    """
+    if not USER_DATA_DIR.exists():
+        return [], ["Thư mục data/users chưa tồn tại."]
+
+    user_files = list(USER_DATA_DIR.glob("*.json"))
+    if not user_files:
+        return [], ["Không tìm thấy người dùng nào đã lưu cấu hình."]
+
+    success = []
+    failed = []
+
+    for f in user_files:
+        try:
+            uid_str = f.stem
+            if not uid_str.isdigit():
+                continue
+            uid = int(uid_str)
+            state = get_user_state(uid)
+            if not state.has_token:
+                continue
+
+            # 1. Cleanly stop old stream session if running
+            with bot.stream_lock:
+                old_eng = bot.active_engines.get(uid)
+            if old_eng and old_eng.running:
+                old_eng.stop()
+                with bot.stream_lock:
+                    bot.active_engines.pop(uid, None)
+                    bot.stream_threads.pop(uid, None)
+                    bot.session_started_at.pop(uid, None)
+
+            # 2. Check token validity
+            session = Session.new()
+            try:
+                ensure_token(state, session.super_props)
+            except Exception as exc:
+                failed.append(f"<@{uid}> (`{uid}`): Token không hợp lệ ({exc})")
+                continue
+
+            # 3. Resolve target voice channel
+            target_cid = ""
+            target_gid = state.last_guild_id or ""
+            ch_name = "Voice Channel"
+
+            if state.last_channel_id and state.last_channel_id.strip():
+                cid = extract_channel_id(state.last_channel_id.strip())
+                valid, gid, name = validate_stream_target(
+                    token=state.token,
+                    super_props=session.super_props,
+                    channel_id=cid,
+                    console=Console(),
+                    guild_id=target_gid,
+                )
+                if valid:
+                    target_cid = cid
+                    target_gid = gid
+                    ch_name = f"#{name}"
+
+            if not target_cid:
+                # Auto-discover random channel
+                rcid, rgid, rname = find_random_voice_channel_from_token(state.token, session.super_props)
+                if rcid:
+                    target_cid = rcid
+                    target_gid = rgid
+                    ch_name = f"#{rname}"
+                    state.last_channel_id = rcid
+                    state.last_guild_id = rgid
+                    save_user_state(uid, state)
+
+            if not target_cid:
+                failed.append(f"<@{uid}> (`{uid}`): Không tìm thấy phòng voice khả dụng")
+                continue
+
+            # 4. Spawn new GatewayStreamEngine
+            engine = GatewayStreamEngine(state, session, Console())
+
+            def _run(u_id: int, eng: GatewayStreamEngine, g_id: str, c_id: str):
+                try:
+                    eng.start_stream(guild_id=g_id, channel_id=c_id, wait_for_stdin=False)
+                finally:
+                    with bot.stream_lock:
+                        if bot.active_engines.get(u_id) == eng:
+                            bot.active_engines.pop(u_id, None)
+                            bot.session_started_at.pop(u_id, None)
+                            bot.stream_threads.pop(u_id, None)
+
+            with bot.stream_lock:
+                bot.active_engines[uid] = engine
+                bot.session_started_at[uid] = time.time()
+                t = threading.Thread(target=_run, args=(uid, engine, target_gid, target_cid), daemon=True)
+                bot.stream_threads[uid] = t
+                t.start()
+
+            success.append(f"<@{uid}> (`{uid}`) ➔ `{ch_name}`")
+        except Exception as exc:
+            failed.append(f"<@{uid}>: Lỗi ({exc})")
+
+    return success, failed
+
+
 @bot.event
 async def on_ready():
     print("=" * 60)
@@ -1451,6 +1556,25 @@ async def admin_stop_all_cmd(interaction: discord.Interaction):
         color=discord.Color.red(),
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@admin_group.command(name="restart_all", description="Phát sóng lại / Khởi động lại luồng Stream cho tất cả người dùng")
+async def admin_restart_all_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+    success, failed = await asyncio.to_thread(restart_all_users_streams)
+    embed = discord.Embed(
+        title=f"🔄 [Admin] Kết quả Phát Lại Stream Toàn Bộ ({len(success)} thành công)",
+        color=discord.Color.green() if success else discord.Color.red(),
+    )
+    if success:
+        embed.add_field(name=f"✅ Đã kết nối & phát sóng ({len(success)} users)", value="\n".join(success[:20]), inline=False)
+    if failed:
+        embed.add_field(name=f"⚠️ Không thể phát ({len(failed)} users)", value="\n".join(failed[:15]), inline=False)
+    embed.set_footer(text=f"Admin: {PRIMARY_ADMIN_ID} · Dùng /admin list để kiểm tra chi tiết.")
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @admin_group.command(name="prune", description="Dọn dẹp các luồng stream bị rớt mạng/treo reconnecting mà giữ nguyên các luồng LIVE")
@@ -1725,6 +1849,7 @@ async def help_cmd(interaction: discord.Interaction):
             value=(
                 "`/admin panel` - Mở Bảng Điều Khiển Admin với các nút bấm trực quan\n"
                 "`/admin list` - Xem tất cả luồng stream đang phát của mọi user\n"
+                "`/admin restart_all` - Phát sóng lại / Stream lại cho toàn bộ người dùng\n"
                 "`/admin stop <user>` - Dừng luồng stream của bất kỳ user nào\n"
                 "`/admin stop_all` - Dừng khẩn cấp toàn bộ các luồng trên bot\n"
                 "`/admin stats` - Xem báo cáo thống kê toàn bộ hệ thống bot\n"
