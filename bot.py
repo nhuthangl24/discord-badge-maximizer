@@ -414,7 +414,7 @@ class FarmGamesModal(ui.Modal, title="Cày Giờ Chơi Game"):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
 
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
         user_file = get_user_state_file(user_id)
         controller = ApplicationController(session_path=user_file)
@@ -429,7 +429,7 @@ class FarmGamesModal(ui.Modal, title="Cày Giờ Chơi Game"):
                 description=f"Lỗi: `{result.get('error')}`",
                 color=discord.Color.red(),
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
         fresh_game_state = AccountSessionState.restore(user_file)
@@ -456,7 +456,7 @@ class FarmGamesModal(ui.Modal, title="Cày Giờ Chơi Game"):
             inline=False
         )
         embed.set_footer(text="Lưu ý: Hệ thống Discord Analytics đồng bộ tiến độ badge sau 24-48 giờ.")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 # ==========================================
@@ -551,7 +551,7 @@ async def handle_start_stream(
             return
 
     if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
     session = Session.new()
     try:
@@ -601,7 +601,7 @@ async def handle_start_stream(
                 ),
                 color=discord.Color.red(),
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
         target_gid = gid
         selected_name = f"#{name}"
@@ -659,7 +659,7 @@ async def handle_start_stream(
                 ),
                 color=discord.Color.red(),
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
     # Save last channel for this user
@@ -705,10 +705,7 @@ async def handle_start_stream(
     )
     embed.add_field(name="Trạng thái", value="🟢 **Đang phát sóng**", inline=True)
     embed.set_footer(text="Dùng /stream status hoặc nút Xem Trạng thái để theo dõi.")
-    await interaction.followup.send(embed=embed)
-    embed.add_field(name="Trạng thái", value="🟢 **Đang phát sóng**", inline=True)
-    embed.set_footer(text="Dùng /stream status hoặc nút Xem Trạng thái để theo dõi.")
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def handle_stop_stream(interaction: discord.Interaction):
@@ -729,7 +726,7 @@ async def handle_stop_stream(interaction: discord.Interaction):
         return
 
     if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
     # Request graceful stop
     engine.stop()
@@ -755,7 +752,7 @@ async def handle_stop_stream(interaction: discord.Interaction):
     embed.add_field(name="Thời gian tính trong phiên", value=f"`{format_timer(engine.counted_stream_seconds)}`", inline=True)
     embed.add_field(name="Tổng số giờ đã cày", value=f"**{fresh_state.total_stream_hours_claimed:,.1f}h**", inline=True)
     embed.set_footer(text="Lưu ý: Huy hiệu Discord Streaming thường cập nhật sau 24-48 giờ.")
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def handle_stream_status(interaction: discord.Interaction):
@@ -1109,7 +1106,7 @@ async def farm_games_cmd(interaction: discord.Interaction, count: Optional[int] 
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=False)
+    await interaction.response.defer(ephemeral=True)
 
     user_file = get_user_state_file(user_id)
     controller = ApplicationController(session_path=user_file)
@@ -1124,7 +1121,7 @@ async def farm_games_cmd(interaction: discord.Interaction, count: Optional[int] 
             description=f"Lỗi: `{result.get('error')}`",
             color=discord.Color.red(),
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
     fresh_game_state = AccountSessionState.restore(user_file)
@@ -1151,7 +1148,7 @@ async def farm_games_cmd(interaction: discord.Interaction, count: Optional[int] 
         inline=False
     )
     embed.set_footer(text="Lưu ý: Hệ thống Discord Analytics đồng bộ tiến độ badge sau 24-48 giờ.")
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 # --- UTILITY COMMANDS ---
