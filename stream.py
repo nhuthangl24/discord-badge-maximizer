@@ -313,6 +313,7 @@ class State:
     last_guild_id: str = ""
     last_channel_id: str = ""
     viewer_token: str = ""
+    stream_url: str = ""
     used_games: list[str] = field(default_factory=list)
     total_games_claimed: int = 0
     total_hours_claimed: float = 0.0
@@ -345,6 +346,8 @@ class State:
                 inst.last_channel_id = os.environ["DISCORD_CHANNEL_ID"].strip()
             if not inst.last_guild_id and os.environ.get("DISCORD_GUILD_ID"):
                 inst.last_guild_id = os.environ["DISCORD_GUILD_ID"].strip()
+            if not inst.stream_url and os.environ.get("DISCORD_STREAM_URL"):
+                inst.stream_url = os.environ["DISCORD_STREAM_URL"].strip()
         return inst
 
     def save(self, path: Optional[Path] = None) -> None:
@@ -634,6 +637,53 @@ class MiniWebSocket:
                 self.sock = None
 
 
+def resolve_media_source(source_url_or_path: str, console: Optional[Console] = None) -> str:
+    """
+    Resolves video source path or URL.
+    - If empty, returns the default local assets/video.mp4.
+    - If local file exists, returns it.
+    - If YouTube URL, uses yt-dlp to extract the direct stream URL.
+    - If direct HTTP/HTTPS URL, returns it.
+    """
+    src = (source_url_or_path or "").strip()
+    default_video = str(ROOT / "assets" / "video.mp4")
+
+    if not src:
+        return default_video if os.path.isfile(default_video) else ""
+
+    if os.path.isfile(src):
+        return src
+
+    if "youtube.com" in src or "youtu.be" in src:
+        try:
+            import yt_dlp
+            if console:
+                console.info("youtube", f"extracting live stream URL from {src}...")
+            ydl_opts = {
+                "format": "best[height<=720]/best[height<=480]/best",
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(src, download=False)
+                stream_url = info.get("url")
+                if stream_url:
+                    if console:
+                        title = info.get("title", "YouTube Stream")
+                        console.ok("youtube", f"resolved: {title}")
+                    return stream_url
+        except Exception as exc:
+            if console:
+                console.warn("youtube", f"yt-dlp extraction failed ({exc}), falling back to default video")
+            return default_video if os.path.isfile(default_video) else src
+
+    if src.startswith("http://") or src.startswith("https://"):
+        return src
+
+    return default_video if os.path.isfile(default_video) else ""
+
+
 class MediaStreamPump:
     def __init__(self, voice_conn: "VoiceConnection", video_path: str, console: Console) -> None:
         self.conn = voice_conn
@@ -644,6 +694,7 @@ class MediaStreamPump:
         self.a_proc: subprocess.Popen | None = None
         self.v_thread: threading.Thread | None = None
         self.a_thread: threading.Thread | None = None
+        self.is_url = bool(self.video_path.startswith("http://") or self.video_path.startswith("https://"))
 
     def _send_rtcp_sr(self, cipher: AESGCM, ssrc: int, rtp_ts: int, pkt_count: int, byte_count: int) -> None:
         now_wall = time.time()
@@ -664,7 +715,7 @@ class MediaStreamPump:
             pass
 
     def start(self) -> bool:
-        if not os.path.exists(self.video_path):
+        if not self.is_url and not os.path.exists(self.video_path):
             self.console.warn("stream", f"video file not found at {self.video_path}, falling back to silence")
             return False
         if not HAS_CRYPTO:
@@ -682,9 +733,23 @@ class MediaStreamPump:
                     pass
             self.running = True
             ffmpeg_bin = find_ffmpeg_binary()
+
+            # Input options: -re ensures 1x real-time rate, avoiding pipe overflow and audio/video desync
+            v_input = ["-re"]
+            if self.is_url:
+                v_input.extend([
+                    "-reconnect", "1",
+                    "-reconnect_at_eof", "1",
+                    "-reconnect_streamed", "1",
+                    "-reconnect_delay_max", "5",
+                ])
+            else:
+                v_input.extend(["-stream_loop", "-1"])
+
             v_cmd = [
                 ffmpeg_bin, "-hide_banner", "-loglevel", "error",
-                "-stream_loop", "-1", "-i", self.video_path,
+                *v_input,
+                "-i", self.video_path,
                 "-r", "30",
                 "-vf", "scale=848:480",
                 "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
@@ -699,9 +764,22 @@ class MediaStreamPump:
                 "-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe,h264_metadata=aud=insert",
                 "-an", "-f", "h264", "pipe:1"
             ]
+
+            a_input = ["-re"]
+            if self.is_url:
+                a_input.extend([
+                    "-reconnect", "1",
+                    "-reconnect_at_eof", "1",
+                    "-reconnect_streamed", "1",
+                    "-reconnect_delay_max", "5",
+                ])
+            else:
+                a_input.extend(["-stream_loop", "-1"])
+
             a_cmd = [
                 ffmpeg_bin, "-hide_banner", "-loglevel", "error",
-                "-stream_loop", "-1", "-i", self.video_path,
+                *a_input,
+                "-i", self.video_path,
                 "-vn", "-c:a", "libopus", "-ar", "48000", "-ac", "2", "-b:a", "64k",
                 "-frame_duration", "20",
                 "-f", "opus", "pipe:1"
@@ -713,7 +791,8 @@ class MediaStreamPump:
             self.a_thread = threading.Thread(target=self._pump_audio, daemon=True)
             self.v_thread.start()
             self.a_thread.start()
-            self.console.ok("stream", f"transmitting real video and audio from {os.path.basename(self.video_path)} (loop enabled)")
+            src_label = self.video_path if self.is_url else os.path.basename(self.video_path)
+            self.console.ok("stream", f"transmitting real video and audio from {src_label} (loop enabled)")
             return True
         except Exception as exc:
             self.console.err("stream", f"failed to start ffmpeg pump: {exc}")
@@ -2673,11 +2752,9 @@ class GatewayStreamEngine:
                         except Exception:
                             pass
                         C.ok("stream_rtc", f"stream media connection active (ssrc={self.stream_conn.ssrc})")
-                        video_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "video.mp4")
-                        if not os.path.exists(video_file):
-                            video_file = os.path.join("assets", "video.mp4")
-                        if os.path.exists(video_file):
-                            if not self.stream_conn.start_media_stream(video_file):
+                        media_source = resolve_media_source(self.state.stream_url, C)
+                        if media_source:
+                            if not self.stream_conn.start_media_stream(media_source):
                                 C.warn("stream_rtc", "falling back to silent audio pump")
                                 self.stream_conn.start_silence_pump()
                         else:

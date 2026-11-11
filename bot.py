@@ -159,8 +159,14 @@ class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Ph�
         required=False,
     )
     channel_id = ui.TextInput(
-        label="ID Phòng Voice (Tùy chọn - Bỏ trống = Random)",
-        placeholder="Bỏ trống để bot tự chọn phòng voice ngẫu nhiên...",
+        label="ID Kênh Voice (Tùy chọn - Bỏ trống = Random)",
+        placeholder="Dán ID phòng voice để lọc theo ID (Bỏ trống = Auto random)...",
+        style=discord.TextStyle.short,
+        required=False,
+    )
+    stream_url = ui.TextInput(
+        label="Link YouTube / Stream URL (Bỏ trống = Mẫu)",
+        placeholder="https://www.youtube.com/watch?v=... hoặc để trống để lặp video mẫu",
         style=discord.TextStyle.short,
         required=False,
     )
@@ -175,6 +181,8 @@ class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Ph�
             self.cookie.default = current_state.cookie
         if current_state.last_channel_id:
             self.channel_id.default = current_state.last_channel_id
+        if current_state.stream_url:
+            self.stream_url.default = current_state.stream_url
 
     async def on_submit(self, interaction: discord.Interaction):
         user_id = interaction.user.id
@@ -187,6 +195,10 @@ class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Ph�
             state.cookie = self.cookie.value.strip()
         if self.channel_id.value.strip():
             state.last_channel_id = extract_channel_id(self.channel_id.value.strip())
+        else:
+            state.last_channel_id = ""
+
+        state.stream_url = self.stream_url.value.strip()
 
         save_user_state(user_id, state)
 
@@ -207,11 +219,64 @@ class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Ph�
         embed.add_field(name="Tài khoản phụ (Alt Viewer)", value=mask_token(state.viewer_token), inline=True)
         embed.add_field(name="Clearance Cookie", value="`Đã cấu hình`" if state.has_cookie else "*(Trống)*", inline=True)
         if state.last_channel_id:
-            embed.add_field(name="Phòng Voice", value=f"`{state.last_channel_id}`", inline=True)
+            embed.add_field(name="Phòng Voice (Khóa theo ID)", value=f"`{state.last_channel_id}`", inline=True)
         else:
             embed.add_field(name="Phòng Voice", value="🎲 *Tự động chọn ngẫu nhiên*", inline=True)
+        if state.stream_url:
+            embed.add_field(name="Nguồn phát Video", value=f"📺 `{state.stream_url}`", inline=False)
+        else:
+            embed.add_field(name="Nguồn phát Video", value="🎞️ *assets/video.mp4 (Lặp vô tận - Loop)*", inline=False)
 
         embed.set_footer(text="Bây giờ bạn có thể bấm nút '🔴 Bắt đầu Stream' hoặc gõ /stream start!")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class SetStreamSourceModal(ui.Modal, title="Cài đặt Video Stream & Phòng Voice"):
+    channel_id = ui.TextInput(
+        label="ID Phòng Voice (Để trống = Tự động Random)",
+        placeholder="Dán ID phòng voice để lọc theo ID (Bỏ trống = Auto random)...",
+        style=discord.TextStyle.short,
+        required=False,
+    )
+    stream_url = ui.TextInput(
+        label="Link YouTube / Stream URL (Để trống = Video mẫu)",
+        placeholder="https://www.youtube.com/watch?v=... hoặc để trống...",
+        style=discord.TextStyle.short,
+        required=False,
+    )
+
+    def __init__(self, current_state: State) -> None:
+        super().__init__()
+        if current_state.last_channel_id:
+            self.channel_id.default = current_state.last_channel_id
+        if current_state.stream_url:
+            self.stream_url.default = current_state.stream_url
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        state = get_user_state(user_id)
+        if self.channel_id.value.strip():
+            state.last_channel_id = extract_channel_id(self.channel_id.value.strip())
+        else:
+            state.last_channel_id = ""
+
+        state.stream_url = self.stream_url.value.strip()
+        save_user_state(user_id, state)
+
+        embed = discord.Embed(
+            title="✅ Đã cập nhật Nguồn phát & Phòng Voice!",
+            color=discord.Color.green(),
+        )
+        embed.add_field(
+            name="Phòng Voice",
+            value=f"`{state.last_channel_id}` (Khóa theo ID)" if state.last_channel_id else "🎲 *Tự động chọn ngẫu nhiên*",
+            inline=True
+        )
+        embed.add_field(
+            name="Nguồn phát Video",
+            value=f"📺 `{state.stream_url}`" if state.stream_url else "🎞️ *assets/video.mp4 (Lặp vô tận - Loop)*",
+            inline=False
+        )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -408,12 +473,17 @@ class ControlPanelView(ui.View):
         state = get_user_state(interaction.user.id)
         await interaction.response.send_modal(AllInOneSetupModal(current_state=state))
 
-    @ui.button(label="👤 Cài Acc Phụ (Alt Viewer)", style=discord.ButtonStyle.secondary, row=0, custom_id="panel_btn_alt")
+    @ui.button(label="👤 Cài Acc Phụ (Alt)", style=discord.ButtonStyle.secondary, row=0, custom_id="panel_btn_alt")
     async def btn_alt(self, interaction: discord.Interaction, button: ui.Button):
         state = get_user_state(interaction.user.id)
         await interaction.response.send_modal(AltAccountModal(current_state=state))
 
-    @ui.button(label="🔴 Bắt đầu Stream (Auto Room)", style=discord.ButtonStyle.success, row=1, custom_id="panel_btn_stream_start")
+    @ui.button(label="📺 Nguồn Video & Kênh (Popup)", style=discord.ButtonStyle.secondary, row=0, custom_id="panel_btn_source")
+    async def btn_source(self, interaction: discord.Interaction, button: ui.Button):
+        state = get_user_state(interaction.user.id)
+        await interaction.response.send_modal(SetStreamSourceModal(current_state=state))
+
+    @ui.button(label="🔴 Bắt đầu Stream", style=discord.ButtonStyle.success, row=1, custom_id="panel_btn_stream_start")
     async def btn_stream_start(self, interaction: discord.Interaction, button: ui.Button):
         await handle_start_stream(interaction, channel_id=None, guild_id=None)
 
@@ -442,9 +512,14 @@ async def handle_start_stream(
     interaction: discord.Interaction,
     channel_id: Optional[str] = None,
     guild_id: Optional[str] = None,
+    stream_url: Optional[str] = None,
 ):
     user_id = interaction.user.id
     state = get_user_state(user_id)
+
+    if stream_url and stream_url.strip():
+        state.stream_url = stream_url.strip()
+        save_user_state(user_id, state)
 
     if not state.has_token:
         embed = discord.Embed(
@@ -490,12 +565,22 @@ async def handle_start_stream(
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    target_cid = extract_channel_id(channel_id.strip()) if channel_id else ""
+    # Channel resolution:
+    # Priority 1: channel_id passed explicitly into command (/stream start channel_id:...)
+    # Priority 2: state.last_channel_id saved from /setup or modal (LỌC THEO ID)
+    # Priority 3: Auto-discovery (random voice room across accessible servers)
+    target_cid = ""
     target_gid = guild_id.strip() if guild_id else ""
     selected_name = "Voice Channel"
     is_random = False
 
-    # Case 1: User explicitly provided a channel_id
+    if channel_id and channel_id.strip():
+        target_cid = extract_channel_id(channel_id.strip())
+    elif state.last_channel_id and state.last_channel_id.strip():
+        target_cid = extract_channel_id(state.last_channel_id.strip())
+        target_gid = state.last_guild_id or target_gid
+
+    # Case 1: LỌC THEO ID (Filter / Lock to specific Channel ID)
     if target_cid:
         valid, gid, name = validate_stream_target(
             token=state.token,
@@ -506,12 +591,13 @@ async def handle_start_stream(
         )
         if not valid:
             embed = discord.Embed(
-                title="❌ Kênh Voice không hợp lệ hoặc tài khoản không có quyền truy cập",
+                title="❌ Kênh Voice theo ID không hợp lệ hoặc thiếu quyền truy cập",
                 description=(
                     f"Phòng Voice ID `{target_cid}` không khả dụng cho tài khoản user của bạn:\n"
                     f"• Lí do: `{name}`\n\n"
                     f"**👉 Khắc phục:** Đảm bảo tài khoản user của bạn ({mask_token(state.token)}) "
-                    f"đã tham gia server chứa phòng voice này và có quyền **Kết nối (Connect)** + **Phát trực tiếp (Stream)**."
+                    f"đã tham gia server chứa phòng voice này và có quyền **Kết nối (Connect)** + **Phát trực tiếp (Stream)**.\n\n"
+                    f"💡 *Mẹo: Nếu muốn đổi sang tự bốc phòng ngẫu nhiên, hãy bấm nút **📺 Nguồn Video & Kênh** và để trống ô ID.*"
                 ),
                 color=discord.Color.red(),
             )
@@ -602,17 +688,24 @@ async def handle_start_stream(
         t.start()
 
     embed = discord.Embed(
-        title="🎲 Đã tự động vào phòng Voice ngẫu nhiên!" if is_random else "🔴 Đã kích hoạt phát Live Stream Go Live!",
+        title="🎲 Đã tự động vào phòng Voice ngẫu nhiên!" if is_random else "🎯 Đã kết nối phòng Voice theo ID!",
         description=f"Tài khoản của bạn đang kết nối Gateway và phát trực tiếp vào phòng voice.",
         color=discord.Color.brand_green(),
     )
     embed.add_field(name="Người dùng", value=interaction.user.mention, inline=True)
     embed.add_field(name="Phòng Voice", value=f"`{selected_name}` (`{target_cid}`)", inline=False)
+    if state.stream_url:
+        embed.add_field(name="Nguồn phát Video", value=f"📺 `{state.stream_url}`", inline=False)
+    else:
+        embed.add_field(name="Nguồn phát Video", value="🎞️ `assets/video.mp4 (Lặp vô tận - Loop)`", inline=False)
     embed.add_field(
         name="Alt Viewer Tự động",
         value="`Bật (Opcode 20)`" if state.has_viewer_token else "`Tắt (Cần người ngồi xem)`",
         inline=True
     )
+    embed.add_field(name="Trạng thái", value="🟢 **Đang phát sóng**", inline=True)
+    embed.set_footer(text="Dùng /stream status hoặc nút Xem Trạng thái để theo dõi.")
+    await interaction.followup.send(embed=embed)
     embed.add_field(name="Trạng thái", value="🟢 **Đang phát sóng**", inline=True)
     embed.set_footer(text="Dùng /stream status hoặc nút Xem Trạng thái để theo dõi.")
     await interaction.followup.send(embed=embed)
@@ -895,13 +988,50 @@ async def panel_cmd(interaction: discord.Interaction):
 stream_group = app_commands.Group(name="stream", description="Quản lý tính năng Live Stream cày Streaming Badge")
 
 
-@stream_group.command(name="start", description="Bắt đầu phát Live Stream (Tự động vào phòng random nếu không điền ID)")
+@stream_group.command(name="start", description="Bắt đầu phát Live Stream (Lọc theo ID phòng đã lưu hoặc bốc random)")
 @app_commands.describe(
-    channel_id="ID kênh voice tùy chọn (Bỏ trống = Bot tự chọn phòng random)",
-    guild_id="ID Server tùy chọn"
+    channel_id="ID kênh voice cụ thể (Bỏ trống = Dùng ID đã lưu trong cấu hình hoặc Auto)",
+    stream_url="(Tùy chọn) Link YouTube hoặc URL video để phát trực tiếp",
+    guild_id="(Tùy chọn) ID Server chứa phòng voice"
 )
-async def stream_start_cmd(interaction: discord.Interaction, channel_id: Optional[str] = None, guild_id: Optional[str] = None):
-    await handle_start_stream(interaction, channel_id=channel_id, guild_id=guild_id)
+async def stream_start_cmd(
+    interaction: discord.Interaction,
+    channel_id: Optional[str] = None,
+    stream_url: Optional[str] = None,
+    guild_id: Optional[str] = None,
+):
+    await handle_start_stream(interaction, channel_id=channel_id, guild_id=guild_id, stream_url=stream_url)
+
+
+@stream_group.command(name="play", description="Phát trực tiếp link YouTube hoặc video URL vào phòng Voice")
+@app_commands.describe(
+    url="Link YouTube (https://www.youtube.com/watch?v=...) hoặc video URL",
+    channel_id="(Tùy chọn) ID kênh voice cụ thể muốn phát vào"
+)
+async def stream_play_cmd(
+    interaction: discord.Interaction,
+    url: str,
+    channel_id: Optional[str] = None,
+):
+    await handle_start_stream(interaction, channel_id=channel_id, stream_url=url)
+
+
+@stream_group.command(name="set_channel", description="Khóa phòng Voice mặc định theo ID (hoặc đặt lại random)")
+@app_commands.describe(
+    channel_id="ID phòng voice (để trống hoặc gõ 'random' để tự động chọn ngẫu nhiên)"
+)
+async def stream_set_channel_cmd(interaction: discord.Interaction, channel_id: Optional[str] = None):
+    user_id = interaction.user.id
+    state = get_user_state(user_id)
+    if not channel_id or channel_id.strip().lower() in ("random", "none", "clear", ""):
+        state.last_channel_id = ""
+        save_user_state(user_id, state)
+        await interaction.response.send_message("🎲 Đã chuyển sang chế độ **Tự động chọn phòng Voice ngẫu nhiên**!", ephemeral=True)
+    else:
+        cid = extract_channel_id(channel_id.strip())
+        state.last_channel_id = cid
+        save_user_state(user_id, state)
+        await interaction.response.send_message(f"🎯 Đã khóa phòng Voice mặc định theo ID: `{cid}`!", ephemeral=True)
 
 
 @stream_group.command(name="stop", description="Dừng phiên phát Live Stream của bạn và lưu lại số giờ")
@@ -1046,8 +1176,13 @@ async def config_cmd(interaction: discord.Interaction):
     embed.add_field(name="Tài khoản phụ (Viewer)", value=mask_token(state.viewer_token), inline=True)
     embed.add_field(name="Clearance Cookie", value="`Đã cấu hình`" if state.has_cookie else "*(Chưa có)*", inline=True)
     embed.add_field(
-        name="Phòng Voice Đã lưu",
+        name="Phòng Voice Đã lưu (Lọc theo ID)",
         value=f"`{state.last_channel_id}`" if state.last_channel_id else "🎲 *Auto Random*",
+        inline=True
+    )
+    embed.add_field(
+        name="Nguồn phát Video",
+        value=f"📺 `{state.stream_url}`" if state.stream_url else "🎞️ *Video mẫu (Lặp vô tận)*",
         inline=True
     )
     embed.add_field(
@@ -1119,7 +1254,9 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(
         name="🔴 Cày Streaming Badge",
         value=(
-            "`/stream start` - Tự động tìm phòng voice khả dụng và phát Live Stream\n"
+            "`/stream start` - Tự động phát Live Stream (lọc theo ID đã lưu hoặc bốc ngẫu nhiên)\n"
+            "`/stream play <url>` - Phát trực tiếp link YouTube hoặc Video URL vào phòng Voice\n"
+            "`/stream set_channel <id>` - Khóa phòng Voice mặc định theo ID (hoặc đặt lại random)\n"
             "`/stream stop` - Dừng phát stream của bạn và lưu lại số giờ\n"
             "`/stream status` - Xem thời gian đã stream và số lượng viewer của bạn\n"
             "`/stream list` - Xem tất cả các luồng đang phát trên server"

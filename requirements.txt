@@ -2,3 +2,4 @@ cryptography>=41.0.0
 dave.py>=1.1.0
 discord.py>=2.0.0
 imageio-ffmpeg>=0.5.0
+yt-dlp>=2024.1.0

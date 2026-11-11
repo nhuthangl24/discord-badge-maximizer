@@ -88,11 +88,13 @@ Khi thấy dòng `[Bot] Đã đồng bộ thành công 8 lệnh Slash. Bot đã 
 
 | Lệnh Slash | Chức năng | Chi tiết |
 | :--- | :--- | :--- |
-| **`/panel`** | **Bảng Điều Khiển Nút Bấm** | Mở Dashboard có sẵn các nút bấm trực tiếp: Cài đặt Popup, Bật/Dừng Stream, Cày Game... |
-| **`/setup`** | **Mở Popup Cài đặt Tài khoản** | **Hiện cửa sổ Popup (Modal) trên Discord** để điền Token tài khoản chính & phụ, cookie, phòng voice mà không lộ tin nhắn. |
+| **`/panel`** | **Bảng Điều Khiển Nút Bấm** | Mở Dashboard có sẵn các nút bấm trực tiếp: Cài đặt Popup, Bật/Dừng Stream, Cày Game, Đổi Video/YouTube... |
+| **`/setup`** | **Mở Popup Cài đặt Tài khoản** | **Hiện cửa sổ Popup (Modal) trên Discord** để điền Token chính, phụ, cookie, lọc ID phòng voice, link YouTube... |
 | **`/setup_main`** | **Popup Tài khoản Chính** | Cửa sổ Popup cài đặt riêng cho tài khoản chính (Acc cày). |
 | **`/setup_alt`** | **Popup Tài khoản Phụ** | Cửa sổ Popup cài đặt riêng cho tài khoản phụ (Alt Viewer xem stream). |
-| **`/stream start`** | **Bắt đầu phát Live Stream** | **Không cần nhập ID phòng!** Bot sẽ tự động tìm và bốc ngẫu nhiên một phòng voice có sẵn để vào phát trực tiếp ngay. |
+| **`/stream start`** | **Bắt đầu phát Live Stream** | Phát sóng vào kênh voice (tự động nhận diện ID phòng đã lưu hoặc bốc ngẫu nhiên). Hỗ trợ link video / YouTube tùy chọn. |
+| **`/stream play`** | **Phát Stream từ Link YouTube / Video** | Phát trực tiếp bất kỳ link video YouTube hoặc URL video trực tuyến nào vào phòng voice. |
+| **`/stream set_channel`** | **Khóa phòng Voice theo ID** | Lưu cố định ID kênh voice muốn phát vào (hoặc gõ `random` để tự động chọn). |
 | **`/stream stop`** | **Dừng Live Stream** | Dừng phát stream và lưu lại tổng số giờ đã cày vào thống kê. |
 | **`/stream status`** | **Xem trạng thái Stream** | Xem thời gian đã phát phiên hiện tại, số người xem (viewers), và tổng số giờ trọn đời. |
 | **`/farm_games`** | **Cày thời gian chơi Game** | Mở Popup chọn số lượng game và số giờ để cày tự động. |
