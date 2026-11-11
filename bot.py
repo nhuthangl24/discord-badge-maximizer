@@ -53,6 +53,7 @@ from games import (
     ApplicationController,
     load_game_catalog,
 )
+import crypto_vault
 
 ROOT = Path(__file__).resolve().parent
 USER_DATA_DIR = ROOT / "data" / "users"
@@ -203,9 +204,7 @@ def save_user_state(user_id: int, state: State) -> None:
 def mask_token(token: str) -> str:
     if not token:
         return "*(Chưa thiết lập)*"
-    if len(token) <= 12:
-        return "********"
-    return f"`{token[:6]}...{token[-4:]}`"
+    return "🔒 `[Mã hóa bảo mật DES + AES]`"
 
 
 # ==========================================
@@ -215,20 +214,20 @@ def mask_token(token: str) -> str:
 class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Phụ)"):
     main_token = ui.TextInput(
         label="Token Chính (Acc cần cày badge)",
-        placeholder="Dán Discord user token tài khoản chính vào đây...",
+        placeholder="Dán token Discord (Tự động mã hóa DES+AES)...",
         style=discord.TextStyle.short,
-        required=True,
+        required=False,
         min_length=20,
     )
     alt_token = ui.TextInput(
         label="Token Phụ (Alt Viewer xem stream)",
-        placeholder="Dán token acc phụ để tự động ngồi xem stream (tùy chọn)...",
+        placeholder="Dán token acc phụ (Tự động mã hóa DES+AES)...",
         style=discord.TextStyle.short,
         required=False,
     )
     cookie = ui.TextInput(
         label="Cookie cf_clearance (Cày giờ game)",
-        placeholder="Dán giá trị cf_clearance cookie header (tùy chọn)...",
+        placeholder="Dán giá trị cf_clearance cookie header (Tự mã hóa)...",
         style=discord.TextStyle.paragraph,
         required=False,
     )
@@ -248,11 +247,13 @@ class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Ph�
     def __init__(self, current_state: State) -> None:
         super().__init__()
         if current_state.token:
-            self.main_token.default = current_state.token
+            self.main_token.placeholder = "🔒 Đã mã hóa DES+AES (Để trống nếu giữ nguyên, dán mới để đổi)"
+        else:
+            self.main_token.required = True
         if current_state.viewer_token:
-            self.alt_token.default = current_state.viewer_token
+            self.alt_token.placeholder = "🔒 Đã mã hóa DES+AES (Để trống nếu giữ nguyên, dán mới để đổi)"
         if current_state.cookie:
-            self.cookie.default = current_state.cookie
+            self.cookie.placeholder = "🔒 Đã mã hóa DES+AES (Để trống nếu giữ nguyên, dán mới để đổi)"
         if current_state.last_channel_id:
             self.channel_id.default = current_state.last_channel_id
         if current_state.stream_url:
@@ -261,7 +262,8 @@ class AllInOneSetupModal(ui.Modal, title="Cấu hình Tài khoản (Chính & Ph�
     async def on_submit(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         state = get_user_state(user_id)
-        state.token = self.main_token.value.strip()
+        if self.main_token.value.strip():
+            state.token = self.main_token.value.strip()
 
         if self.alt_token.value.strip():
             state.viewer_token = self.alt_token.value.strip()
@@ -357,14 +359,14 @@ class SetStreamSourceModal(ui.Modal, title="Cài đặt Video Stream & Phòng Vo
 class MainAccountModal(ui.Modal, title="Cài đặt Tài khoản Chính (Acc cày)"):
     main_token = ui.TextInput(
         label="Token Tài khoản Chính",
-        placeholder="Dán token tài khoản chính vào đây...",
+        placeholder="Dán token tài khoản chính (Tự động mã hóa DES+AES)...",
         style=discord.TextStyle.short,
-        required=True,
+        required=False,
         min_length=20,
     )
     cookie = ui.TextInput(
         label="Cookie cf_clearance (Tùy chọn - Cày game)",
-        placeholder="Dán cf_clearance cookie header...",
+        placeholder="Dán cf_clearance cookie header (Tự mã hóa)...",
         style=discord.TextStyle.paragraph,
         required=False,
     )
@@ -372,14 +374,17 @@ class MainAccountModal(ui.Modal, title="Cài đặt Tài khoản Chính (Acc cà
     def __init__(self, current_state: State) -> None:
         super().__init__()
         if current_state.token:
-            self.main_token.default = current_state.token
+            self.main_token.placeholder = "🔒 Đã mã hóa DES+AES (Để trống nếu giữ nguyên, dán mới để đổi)"
+        else:
+            self.main_token.required = True
         if current_state.cookie:
-            self.cookie.default = current_state.cookie
+            self.cookie.placeholder = "🔒 Đã mã hóa DES+AES (Để trống nếu giữ nguyên, dán mới để đổi)"
 
     async def on_submit(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         state = get_user_state(user_id)
-        state.token = self.main_token.value.strip()
+        if self.main_token.value.strip():
+            state.token = self.main_token.value.strip()
         if self.cookie.value.strip():
             state.cookie = self.cookie.value.strip()
         save_user_state(user_id, state)
@@ -393,10 +398,11 @@ class MainAccountModal(ui.Modal, title="Cài đặt Tài khoản Chính (Acc cà
 
         embed = discord.Embed(
             title="✅ Đã lưu Tài khoản Chính thành công!",
+            description="Token và Cookie đã được bảo mật mã hóa lồng nhau bằng **TripleDES + AES-256**.",
             color=discord.Color.green(),
         )
         embed.add_field(name="Token Chính", value=mask_token(state.token), inline=True)
-        embed.add_field(name="Cookie", value="`Đã lưu`" if state.has_cookie else "*(Trống)*", inline=True)
+        embed.add_field(name="Cookie", value="`Đã lưu & mã hóa`" if state.has_cookie else "*(Trống)*", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -405,24 +411,27 @@ class AltAccountModal(ui.Modal, title="Cài đặt Tài khoản Phụ (Alt Viewe
         label="Token Tài khoản Phụ (Alt Viewer)",
         placeholder="Dán token tài khoản phụ để auto-view stream (Opcode 20)...",
         style=discord.TextStyle.short,
-        required=True,
+        required=False,
         min_length=20,
     )
 
     def __init__(self, current_state: State) -> None:
         super().__init__()
         if current_state.viewer_token:
-            self.alt_token.default = current_state.viewer_token
+            self.alt_token.placeholder = "🔒 Đã mã hóa DES+AES (Để trống nếu giữ nguyên, dán mới để đổi)"
+        else:
+            self.alt_token.required = True
 
     async def on_submit(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         state = get_user_state(user_id)
-        state.viewer_token = self.alt_token.value.strip()
+        if self.alt_token.value.strip():
+            state.viewer_token = self.alt_token.value.strip()
         save_user_state(user_id, state)
 
         embed = discord.Embed(
             title="✅ Đã lưu Tài khoản Phụ (Alt Viewer) thành công!",
-            description="Tài khoản phụ này sẽ tự động tham gia phòng voice và xem stream khi bạn phát.",
+            description="Tài khoản phụ đã được mã hóa lồng nhau **DES + AES** và sẽ tự động tham gia phòng voice xem stream.",
             color=discord.Color.green(),
         )
         embed.add_field(name="Token Phụ", value=mask_token(state.viewer_token), inline=True)
@@ -1477,9 +1486,11 @@ async def autonomous_stream_supervisor():
 
 @bot.event
 async def on_ready():
+    migrated = crypto_vault.migrate_all_user_states(USER_DATA_DIR)
     print("=" * 60)
     print(f"  Bot Multi-User đã online: {bot.user} (ID: {bot.user.id})")
     print(f"  Admin ID: {PRIMARY_ADMIN_ID} (Quyền Quản Trị Tối Cao)")
+    print(f"  Bảo mật Token: Lồng nhau TripleDES + AES-256 ({migrated} files đã mã hóa)")
     print(f"  Gõ /panel để mở Bảng điều khiển tương tác!")
     print(f"  Chế độ Tự Động Giám Sát & Dọn Luồng (Auto-Supervisor): BẬT (100% Tự Động)")
     print("=" * 60)

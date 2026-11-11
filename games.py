@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterator, Sequence
 
+import crypto_vault
+
 WORKSPACE_DIR = Path(__file__).resolve().parent
 STATE_STORAGE_PATH = WORKSPACE_DIR / "session.json"
 DATABASE_STORAGE_PATH = WORKSPACE_DIR.parent / "data" / "games.json"
@@ -330,6 +332,11 @@ class AccountSessionState:
                 instance = cls(**{k: v for k, v in raw_data.items() if k in known_keys and k != "used_games" and not k.startswith("_")})
                 instance.used_games = raw_data.get("used_games", [])
                 instance._filepath = target
+
+                # Transparently decrypt nested DES+AES credentials into memory
+                uid_str = target.stem if (target and target.stem.isdigit()) else ""
+                instance.token = crypto_vault.decrypt_token(instance.token, uid_str)
+                instance.cookie = crypto_vault.decrypt_token(instance.cookie, uid_str)
             except Exception:
                 pass
         # Fall back to environment variables if not present in session.json (only when no custom path specified)
@@ -350,6 +357,14 @@ class AccountSessionState:
             except Exception:
                 pass
         save_data = {k: v for k, v in asdict(self).items() if not k.startswith("_")}
+
+        # Always encrypt sensitive tokens with nested DES+AES before saving to disk
+        uid_str = target.stem if (target and target.stem.isdigit()) else ""
+        if save_data.get("token"):
+            save_data["token"] = crypto_vault.encrypt_token(save_data["token"], uid_str)
+        if save_data.get("cookie"):
+            save_data["cookie"] = crypto_vault.encrypt_token(save_data["cookie"], uid_str)
+
         existing.update(save_data)
         target.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 

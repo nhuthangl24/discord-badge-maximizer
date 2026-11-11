@@ -46,6 +46,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence, Optional
 
+import crypto_vault
+
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     HAS_CRYPTO = True
@@ -332,6 +334,12 @@ class State:
                 inst = cls(**filtered)
                 inst.used_games = data.get("used_games", [])
                 inst._filepath = target
+
+                # Transparently decrypt nested DES+AES credentials into memory
+                uid_str = target.stem if (target and target.stem.isdigit()) else ""
+                inst.token = crypto_vault.decrypt_token(inst.token, uid_str)
+                inst.viewer_token = crypto_vault.decrypt_token(inst.viewer_token, uid_str)
+                inst.cookie = crypto_vault.decrypt_token(inst.cookie, uid_str)
             except Exception:
                 pass
         # Fallback to environment variables only if no explicit path is passed
@@ -360,6 +368,16 @@ class State:
             except Exception:
                 pass
         save_data = {k: v for k, v in asdict(self).items() if not k.startswith("_")}
+
+        # Always encrypt sensitive tokens with nested DES+AES before saving to disk
+        uid_str = target.stem if (target and target.stem.isdigit()) else ""
+        if save_data.get("token"):
+            save_data["token"] = crypto_vault.encrypt_token(save_data["token"], uid_str)
+        if save_data.get("viewer_token"):
+            save_data["viewer_token"] = crypto_vault.encrypt_token(save_data["viewer_token"], uid_str)
+        if save_data.get("cookie"):
+            save_data["cookie"] = crypto_vault.encrypt_token(save_data["cookie"], uid_str)
+
         existing.update(save_data)
         target.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
