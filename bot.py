@@ -887,14 +887,28 @@ async def handle_start_stream(
     engine = GatewayStreamEngine(state, session, Console())
 
     def _run_stream(uid: int, eng: GatewayStreamEngine, gid: str, cid: str):
-        try:
-            eng.start_stream(guild_id=gid, channel_id=cid, wait_for_stdin=False)
-        finally:
-            with bot.stream_lock:
-                if bot.active_engines.get(uid) == eng:
-                    bot.active_engines.pop(uid, None)
-                    bot.session_started_at.pop(uid, None)
-                    bot.stream_threads.pop(uid, None)
+        C = eng.console
+        eng.stopped_by_user = False
+        restarts = 0
+        while not eng.stopped_by_user:
+            try:
+                eng.start_stream(guild_id=gid, channel_id=cid, wait_for_stdin=False)
+            except Exception as exc:
+                C.warn("stream", f"stream cycle error for user {uid}: {exc}")
+
+            if eng.stopped_by_user:
+                break
+
+            restarts += 1
+            delay = min(8.0, 2.0 + (restarts % 4) * 1.5)
+            C.info("stream", f"🔄 [Đa luồng Auto-Res] Luồng của user {uid} tự động khôi phục phát lại sau {delay:.1f}s (Chế độ phát liên tục không tắt)...")
+            time.sleep(delay)
+
+        with bot.stream_lock:
+            if bot.active_engines.get(uid) == eng:
+                bot.active_engines.pop(uid, None)
+                bot.session_started_at.pop(uid, None)
+                bot.stream_threads.pop(uid, None)
 
     with bot.stream_lock:
         bot.active_engines[user_id] = engine
@@ -944,7 +958,7 @@ async def handle_stop_stream(interaction: discord.Interaction, target_user_id: O
     with bot.stream_lock:
         engine = bot.active_engines.get(target_id)
 
-    if not engine or not engine.running:
+    if not engine or engine.stopped_by_user:
         msg = "Bạn không có phiên Stream nào đang chạy" if target_id == caller_id else f"Người dùng <@{target_id}> không có phiên Stream nào đang chạy"
         embed = discord.Embed(
             title="ℹ️ " + msg,
@@ -996,7 +1010,7 @@ async def handle_stream_status(interaction: discord.Interaction):
 
     state = get_user_state(user_id)
 
-    if not engine or not engine.running:
+    if not engine or engine.stopped_by_user:
         embed = discord.Embed(
             title="⚪ Trạng thái: Đang nghỉ (Idle)",
             description="Tài khoản của bạn hiện không phát sóng.",
@@ -1358,14 +1372,28 @@ def restart_all_users_streams() -> tuple[list[str], list[str]]:
             engine = GatewayStreamEngine(state, session, Console())
 
             def _run(u_id: int, eng: GatewayStreamEngine, g_id: str, c_id: str):
-                try:
-                    eng.start_stream(guild_id=g_id, channel_id=c_id, wait_for_stdin=False)
-                finally:
-                    with bot.stream_lock:
-                        if bot.active_engines.get(u_id) == eng:
-                            bot.active_engines.pop(u_id, None)
-                            bot.session_started_at.pop(u_id, None)
-                            bot.stream_threads.pop(u_id, None)
+                C = eng.console
+                eng.stopped_by_user = False
+                restarts = 0
+                while not eng.stopped_by_user:
+                    try:
+                        eng.start_stream(guild_id=g_id, channel_id=c_id, wait_for_stdin=False)
+                    except Exception as exc:
+                        C.warn("stream", f"stream cycle error for user {u_id}: {exc}")
+
+                    if eng.stopped_by_user:
+                        break
+
+                    restarts += 1
+                    delay = min(8.0, 2.0 + (restarts % 4) * 1.5)
+                    C.info("stream", f"🔄 [Đa luồng Auto-Res] Luồng của user {u_id} tự động khôi phục phát lại sau {delay:.1f}s (Phát liên tục không tắt)...")
+                    time.sleep(delay)
+
+                with bot.stream_lock:
+                    if bot.active_engines.get(u_id) == eng:
+                        bot.active_engines.pop(u_id, None)
+                        bot.session_started_at.pop(u_id, None)
+                        bot.stream_threads.pop(u_id, None)
 
             with bot.stream_lock:
                 bot.active_engines[uid] = engine
@@ -1382,16 +1410,15 @@ def restart_all_users_streams() -> tuple[list[str], list[str]]:
 
 
 async def autonomous_stream_supervisor():
-    """Background supervisor that runs continuously every 15 seconds.
-    - Completely automates zombie/disconnected stream detection and cleanups.
-    - Neither Admin nor users need to do anything manually!
-    - Healthy LIVE streams are 100% protected and remain streaming undisturbed.
+    """Background supervisor that monitors multi-user streaming threads every 15 seconds.
+    - NEVER ends any user's stream unless the user explicitly stops it!
+    - If a worker thread ever dies unexpectedly, automatically revives/resumes it in its dedicated thread!
+    - Protects 24/7 continuous stream accumulation across all users.
     """
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
             await asyncio.sleep(15)
-            now = time.time()
             with bot.stream_lock:
                 uids = list(bot.active_engines.keys())
 
@@ -1399,32 +1426,51 @@ async def autonomous_stream_supervisor():
                 with bot.stream_lock:
                     eng = bot.active_engines.get(uid)
                     t = bot.stream_threads.get(uid)
-                    started = bot.session_started_at.get(uid, now)
 
                 if not eng:
                     continue
 
-                # 1. Thread dead or engine stopped
-                thread_dead = (t is not None and not t.is_alive())
-                engine_stopped = (not eng.running)
-
-                # 2. Engine stuck disconnected (> 45s without stream or voice connection)
-                is_stuck_disconnected = (
-                    not eng.stream_connected
-                    and not eng.voice_connected
-                    and (now - started > 45)
-                )
-
-                if thread_dead or engine_stopped or is_stuck_disconnected:
-                    try:
-                        eng.stop()
-                    except Exception:
-                        pass
+                if eng.stopped_by_user:
                     with bot.stream_lock:
                         bot.active_engines.pop(uid, None)
                         bot.stream_threads.pop(uid, None)
                         bot.session_started_at.pop(uid, None)
-                    print(f"[AutoSupervisor] Đã tự động thu dọn luồng stream treo của user {uid} (Đã bảo toàn số giờ cày).")
+                    continue
+
+                # Thread died unexpectedly while user still wants it running -> Auto-Revive
+                if t is not None and not t.is_alive() and not eng.stopped_by_user:
+                    print(f"[AutoSupervisor] Luồng của user {uid} bị gián đoạn, đang tự động hồi sinh (auto-res) lại ngay...")
+                    state = get_user_state(uid)
+                    target_gid = eng.guild_id or state.last_guild_id
+                    target_cid = eng.channel_id or state.last_channel_id
+
+                    def _revive_run(u_id: int, e: GatewayStreamEngine, g_id: str, c_id: str):
+                        C = e.console
+                        restarts = 0
+                        while not e.stopped_by_user:
+                            try:
+                                e.start_stream(guild_id=g_id, channel_id=c_id, wait_for_stdin=False)
+                            except Exception as exc:
+                                C.warn("stream", f"stream cycle error for user {u_id}: {exc}")
+
+                            if e.stopped_by_user:
+                                break
+
+                            restarts += 1
+                            delay = min(8.0, 2.0 + (restarts % 4) * 1.5)
+                            C.info("stream", f"🔄 [Đa luồng Auto-Res] Luồng của user {u_id} tự động khôi phục phát lại sau {delay:.1f}s...")
+                            time.sleep(delay)
+
+                        with bot.stream_lock:
+                            if bot.active_engines.get(u_id) == e:
+                                bot.active_engines.pop(u_id, None)
+                                bot.session_started_at.pop(u_id, None)
+                                bot.stream_threads.pop(u_id, None)
+
+                    new_t = threading.Thread(target=_revive_run, args=(uid, eng, target_gid, target_cid), daemon=True)
+                    with bot.stream_lock:
+                        bot.stream_threads[uid] = new_t
+                    new_t.start()
         except Exception:
             pass
 

@@ -1951,6 +1951,7 @@ class GatewayStreamEngine:
         self.voice_conn: VoiceConnection | None = None
         self.stream_conn: VoiceConnection | None = None
         self.running = False
+        self.stopped_by_user = False
         self.heartbeat_interval = 41.25
         self.sequence: int | None = None
         self.start_time = 0.0
@@ -1990,8 +1991,20 @@ class GatewayStreamEngine:
         self._cached_supplemental_guilds: list[dict] = []
 
     def stop(self) -> None:
-        """Signal the stream engine to gracefully stop broadcasting."""
+        """Signal the stream engine to gracefully stop broadcasting permanently by user."""
+        self.stopped_by_user = True
         self.running = False
+        if self.viewer_engine:
+            self.viewer_engine.stop()
+        if self.stream_conn:
+            self.stream_conn.close()
+        if self.voice_conn:
+            self.voice_conn.close()
+        if self.ws:
+            try:
+                self.ws.close()
+            except Exception:
+                pass
 
     def get_viewer_count(self) -> int:
         members = set(self.channel_members) | set(self.stream_viewer_ids)
@@ -2040,13 +2053,15 @@ class GatewayStreamEngine:
         except Exception as exc:
             C.err("gateway", f"connection failed: {exc}")
             C.rule()
-            safe_input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
+            if wait_for_stdin:
+                safe_input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
             return
 
         C.ok("gateway", "connected")
         self.running = True
         self.start_time = time.time()
-        self.counted_stream_seconds = 0.0
+        if not hasattr(self, "counted_stream_seconds") or self.counted_stream_seconds is None:
+            self.counted_stream_seconds = 0.0
         self.user_id = _user_id_from_token(self.state.token) or ""
         self.stream_ever_active = False
         self._stream_recreate_attempts = 0
@@ -2062,9 +2077,10 @@ class GatewayStreamEngine:
 
         self.ready_received.wait(timeout=5.0)
 
-        if not self.running:
+        if not self.running or self.stopped_by_user:
             C.rule()
-            safe_input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
+            if wait_for_stdin:
+                safe_input(f"  {C.ORANGE}›{C.RESET} press enter to return to menu")
             return
 
         if self.detected_channel_id:
@@ -2236,16 +2252,14 @@ class GatewayStreamEngine:
         self._cleanup(self.guild_id)
 
     def _status_display(self) -> None:
-        reconnect_streak = 0
-        while self.running:
+        while self.running and not self.stopped_by_user:
             time.sleep(10)
-            if not self.running:
+            if not self.running or self.stopped_by_user:
                 break
             counted_hours = self.counted_stream_seconds / 3600.0
             timer_str = format_timer(self.counted_stream_seconds)
             viewers = self.get_viewer_count()
             if self.stream_connected:
-                reconnect_streak = 0
                 if viewers > 0:
                     lbl = f"{viewers} viewer" if viewers == 1 else f"{viewers} viewers"
                     status = f"{self.console.MAGENTA}🔴 LIVE ({lbl}){self.console.RESET}"
@@ -2254,17 +2268,11 @@ class GatewayStreamEngine:
                     status = f"{self.console.YELLOW}⚠️ LIVE (0 VIEWERS: PAUSED){self.console.RESET}"
                     self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted {self.console.GREY}(accumulation paused - waiting for viewer){self.console.RESET}")
             elif self.voice_connected:
-                reconnect_streak = 0
                 status = f"{self.console.CYAN}⏳ starting stream{self.console.RESET}"
                 self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted")
             else:
-                reconnect_streak += 1
                 status = f"{self.console.YELLOW}⏳ reconnecting{self.console.RESET}"
                 self.console.live("stream", f"{status} · {timer_str} ({counted_hours:.2f}h) counted")
-                if reconnect_streak >= 5:
-                    self.console.warn("stream", "session disconnected for >50s — auto-stopping and saving hours to prevent zombie process.")
-                    self.running = False
-                    break
 
             if self.stream_connected and self.stream_key and self.ws and not self.ws.closed:
                 try:
@@ -2311,16 +2319,14 @@ class GatewayStreamEngine:
 
         attempts = 0
         backoff = 3
-        max_reconnect_attempts = 10
-        while self.running:
+        while self.running and not self.stopped_by_user:
             attempts += 1
-            if attempts > max_reconnect_attempts:
-                C.err("gateway", f"reconnect failed after {max_reconnect_attempts} attempts — stopping session to prevent zombie loop and saving accumulated hours.")
-                self.running = False
+            if attempts > 3:
+                C.info("gateway", "fast-recycling gateway session for a fresh auto-resume connection...")
                 return False
-            C.warn("gateway", f"reconnecting to gateway in {backoff}s (attempt {attempts}/{max_reconnect_attempts})...")
+            C.warn("gateway", f"reconnecting to gateway in {backoff}s (attempt {attempts}/3)...")
             for _ in range(backoff * 10):
-                if not self.running:
+                if not self.running or self.stopped_by_user:
                     return False
                 time.sleep(0.1)
 
@@ -2942,20 +2948,26 @@ class GatewayStreamEngine:
         if (self.stream_connected or self.stream_ever_active):
             counted_hours = self.counted_stream_seconds / 3600.0
             elapsed_wall = time.time() - self.start_time if self.start_time > 0 else 0.0
-            if self.counted_stream_seconds >= 10:
-                self.state.total_stream_hours_claimed += counted_hours
-                self.state.total_stream_sessions += 1
+            new_seconds = max(0.0, self.counted_stream_seconds - getattr(self, "_saved_stream_seconds", 0.0))
+            if new_seconds >= 5:
+                self.state.total_stream_hours_claimed += new_seconds / 3600.0
+                self._saved_stream_seconds = self.counted_stream_seconds
+                if self.stopped_by_user:
+                    self.state.total_stream_sessions += 1
                 self.state.save()
+
+            if self.stopped_by_user:
                 print()
-                C.ok("stream", f"ended · {format_timer(self.counted_stream_seconds)} ({counted_hours:.2f}h) counted streaming hours ({format_timer(elapsed_wall)} total wall time)")
-                C.info(f"{C.GREY}note: badge progression typically syncs within 24-48 hours.{C.RESET}")
-            else:
-                print()
-                if self.stream_ever_active and self.counted_stream_seconds < 10:
+                if self.counted_stream_seconds >= 10:
+                    C.ok("stream", f"ended · {format_timer(self.counted_stream_seconds)} ({counted_hours:.2f}h) counted streaming hours ({format_timer(elapsed_wall)} total wall time)")
+                    C.info(f"{C.GREY}note: badge progression typically syncs within 24-48 hours.{C.RESET}")
+                elif self.stream_ever_active and self.counted_stream_seconds < 10:
                     C.warn("stream", f"ended · {format_timer(0)} (0.00h) counted (0 viewers were present — stream hours were paused)")
                     C.info(f"{C.GREY}hint: have an alt or friend sit in the voice channel next time so hours count.{C.RESET}")
                 else:
                     C.info("stream session ended.")
+            else:
+                C.info("stream", f"checkpoint saved: {format_timer(self.counted_stream_seconds)} ({counted_hours:.2f}h) counted. Auto-resuming fresh session...")
         else:
             print()
             C.info("stream session ended.")
