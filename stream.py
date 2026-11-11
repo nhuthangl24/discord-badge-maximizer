@@ -662,10 +662,9 @@ def resolve_media_source(source_url_or_path: str, console: Optional[Console] = N
             ydl_opts = {
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android", "ios", "web"]
+                        "player_client": ["android", "ios", "web", "mweb"]
                     }
                 },
-                "format": "best[ext=mp4][height<=720]/best[height<=720]/best[ext=mp4]/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "skip_download": True,
@@ -678,9 +677,14 @@ def resolve_media_source(source_url_or_path: str, console: Optional[Console] = N
                 stream_url = info.get("url")
                 if not stream_url and info.get("formats"):
                     for f in reversed(info["formats"]):
-                        if f.get("url") and f.get("vcodec") != "none":
+                        if f.get("url") and f.get("vcodec") != "none" and f.get("acodec") != "none":
                             stream_url = f["url"]
                             break
+                    if not stream_url:
+                        for f in reversed(info["formats"]):
+                            if f.get("url") and f.get("vcodec") != "none":
+                                stream_url = f["url"]
+                                break
                     if not stream_url:
                         for f in reversed(info["formats"]):
                             if f.get("url"):
@@ -733,28 +737,10 @@ class MediaStreamPump:
         except Exception:
             pass
 
-    def start(self) -> bool:
-        if not self.is_url and not os.path.exists(self.video_path):
-            self.console.warn("stream", f"video file not found at {self.video_path}, falling back to silence")
-            return False
-        if not HAS_CRYPTO:
-            self.console.err("crypto", "cryptography package is missing — live video streaming will NOT work! Run: pip install -r requirements.txt")
-            return False
-        if not self.conn.secret_key or not self.conn.udp_sock:
-            self.console.warn("stream", "encryption key or udp socket missing, falling back to silence")
-            return False
+    def _spawn_video(self) -> subprocess.Popen | None:
         try:
-            if sys.platform == "win32":
-                try:
-                    import ctypes
-                    ctypes.windll.winmm.timeBeginPeriod(1)
-                except Exception:
-                    pass
-            self.running = True
             ffmpeg_bin = find_ffmpeg_binary()
-
-            # Input options: -re ensures 1x real-time rate, avoiding pipe overflow and audio/video desync
-            v_input = ["-re", "-stream_loop", "-1"]
+            v_input = ["-stream_loop", "-1"]
             if self.is_url:
                 v_input.extend([
                     "-reconnect", "1",
@@ -776,13 +762,20 @@ class MediaStreamPump:
                 "-bf", "0", "-b_strategy", "0", "-flags", "+low_delay",
                 "-force_key_frames", "expr:gte(t,n_forced*1)",
                 "-profile:v", "baseline", "-level", "3.1",
-                "-x264opts", "b-pyramid=0:bframes=0:ref=1:no-scenecut=1:keyint=30:min-keyint=30",
+                "-x264opts", "b-pyramid=0:bframes=0:ref=1:no-scenecut=1:keyint=30:min-keyint=30:repeat-headers=1",
                 "-pix_fmt", "yuv420p",
                 "-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe,h264_metadata=aud=insert",
                 "-an", "-f", "h264", "pipe:1"
             ]
+            return subprocess.Popen(v_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=1048576)
+        except Exception as exc:
+            self.console.err("stream", f"failed to spawn ffmpeg video process: {exc}")
+            return None
 
-            a_input = ["-re", "-stream_loop", "-1"]
+    def _spawn_audio(self) -> subprocess.Popen | None:
+        try:
+            ffmpeg_bin = find_ffmpeg_binary()
+            a_input = ["-stream_loop", "-1"]
             if self.is_url:
                 a_input.extend([
                     "-reconnect", "1",
@@ -799,8 +792,35 @@ class MediaStreamPump:
                 "-frame_duration", "20",
                 "-f", "opus", "pipe:1"
             ]
-            self.v_proc = subprocess.Popen(v_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=1048576)
-            self.a_proc = subprocess.Popen(a_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
+            return subprocess.Popen(a_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
+        except Exception as exc:
+            self.console.err("stream", f"failed to spawn ffmpeg audio process: {exc}")
+            return None
+
+    def start(self) -> bool:
+        if not self.is_url and not os.path.exists(self.video_path):
+            self.console.warn("stream", f"video file not found at {self.video_path}, falling back to silence")
+            return False
+        if not HAS_CRYPTO:
+            self.console.err("crypto", "cryptography package is missing — live video streaming will NOT work! Run: pip install -r requirements.txt")
+            return False
+        if not self.conn.secret_key or not self.conn.udp_sock:
+            self.console.warn("stream", "encryption key or udp socket missing, falling back to silence")
+            return False
+        try:
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    ctypes.windll.winmm.timeBeginPeriod(1)
+                except Exception:
+                    pass
+            self.running = True
+
+            self.v_proc = self._spawn_video()
+            self.a_proc = self._spawn_audio()
+            if not self.v_proc and not self.a_proc:
+                self.stop()
+                return False
 
             self.v_thread = threading.Thread(target=self._pump_video, daemon=True)
             self.a_thread = threading.Thread(target=self._pump_audio, daemon=True)
@@ -929,11 +949,25 @@ class MediaStreamPump:
                 next_time = now
             next_time += frame_interval
 
-        while self.running and self.v_proc and self.v_proc.stdout:
+        while self.running:
+            if not self.v_proc or self.v_proc.poll() is not None:
+                self.v_proc = self._spawn_video()
+                if not self.v_proc:
+                    time.sleep(1.0)
+                    continue
+
             try:
                 chunk = self.v_proc.stdout.read(4096)
                 if not chunk:
-                    break
+                    # FFmpeg reached EOF or exited, restart seamless loop
+                    try:
+                        self.v_proc.terminate()
+                        self.v_proc.wait(timeout=0.5)
+                    except Exception:
+                        pass
+                    self.v_proc = None
+                    time.sleep(0.1)
+                    continue
                 buf.extend(chunk)
                 while True:
                     p4 = buf.find(b"\x00\x00\x00\x01", 4)
@@ -956,7 +990,8 @@ class MediaStreamPump:
                     else:
                         cur_frame.append(data)
             except Exception:
-                break
+                time.sleep(0.1)
+
         if cur_frame:
             send_frame(cur_frame)
 
@@ -969,11 +1004,25 @@ class MediaStreamPump:
         a_pkts = 0
         a_bytes = 0
         last_a_sr = time.monotonic()
-        while self.running and self.a_proc and self.a_proc.stdout:
+
+        while self.running:
+            if not self.a_proc or self.a_proc.poll() is not None:
+                self.a_proc = self._spawn_audio()
+                if not self.a_proc:
+                    time.sleep(1.0)
+                    continue
+
             try:
                 chunk = self.a_proc.stdout.read(4096)
                 if not chunk:
-                    break
+                    try:
+                        self.a_proc.terminate()
+                        self.a_proc.wait(timeout=0.5)
+                    except Exception:
+                        pass
+                    self.a_proc = None
+                    time.sleep(0.1)
+                    continue
                 buf.extend(chunk)
                 while len(buf) >= 27:
                     if buf[:4] != b"OggS":
@@ -1036,7 +1085,7 @@ class MediaStreamPump:
                                 next_time = now
                             next_time += 0.020
             except Exception:
-                break
+                time.sleep(0.1)
 
     def stop(self) -> None:
         self.running = False
@@ -2544,24 +2593,45 @@ class GatewayStreamEngine:
 
                 if (self.voice_connected or self.stream_connected or self.stream_ever_active):
                     if vs_channel_id is None:
-                        if not self.voice_conn or self.voice_conn.ws is None or self.voice_conn.ws.closed:
-                            C.warn("voice", "user manually disconnected from voice channel in Discord app")
-                            C.info("gracefully stopping stream engine and saving accumulated stream hours...")
-                            self._user_left_vc = True
-                            self.voice_connected = False
-                            self.stream_connected = False
-                            self.running = False
+                        if self._user_left_vc or not self.running:
                             return
+                        C.warn("voice", "voice channel connection dropped by server, auto-rejoining in 2s...")
+                        def _rejoin_vc():
+                            time.sleep(2.0)
+                            if self.running and self.ws and not self.ws.closed and self.channel_id:
+                                try:
+                                    self.ws.send(json.dumps({
+                                        "op": 4,
+                                        "d": {
+                                            "guild_id": self.guild_id,
+                                            "channel_id": self.channel_id,
+                                            "self_mute": False,
+                                            "self_deaf": False,
+                                            "self_video": False,
+                                        },
+                                    }))
+                                except Exception:
+                                    pass
+                        threading.Thread(target=_rejoin_vc, daemon=True).start()
 
                     elif self.channel_id and str(vs_channel_id) != str(self.channel_id):
-                        if not self.voice_conn or self.voice_conn.ws is None or self.voice_conn.ws.closed:
-                            C.warn("voice", f"user moved to another voice channel ({vs_channel_id}) in Discord app")
-                            C.info("stopping stream on old channel and saving accumulated stream hours...")
-                            self._user_left_vc = True
-                            self.voice_connected = False
-                            self.stream_connected = False
-                            self.running = False
-                            return
+                        C.warn("voice", f"user moved to voice channel ({vs_channel_id}), moving stream to follow user...")
+                        self.channel_id = str(vs_channel_id)
+                        if vs_guild_id:
+                            self.guild_id = vs_guild_id
+                        if self.ws and not self.ws.closed:
+                            try:
+                                self.ws.send(json.dumps({
+                                    "op": 18,
+                                    "d": {
+                                        "type": "guild",
+                                        "guild_id": self.guild_id,
+                                        "channel_id": self.channel_id,
+                                        "preferred_region": None,
+                                    },
+                                }))
+                            except Exception:
+                                pass
 
                 C.ok("voice", f"voice state updated (session: {self.voice_session_id[:8]}...)")
             else:
@@ -2789,28 +2859,25 @@ class GatewayStreamEngine:
             if not self.running or not self.voice_connected or self._user_left_vc:
                 return
 
-            if self._stream_recreate_attempts < 3:
-                self._stream_recreate_attempts += 1
-                C.warn("stream", f"stream stopped by server, re-requesting Go Live in 2s (attempt {self._stream_recreate_attempts}/3)...")
-                def _recreate():
-                    time.sleep(2.0)
-                    if self.running and self.ws and not self.ws.closed and self.voice_connected and not self._user_left_vc:
-                        try:
-                            self.ws.send(json.dumps({
-                                "op": 18,
-                                "d": {
-                                    "type": "guild",
-                                    "guild_id": self.guild_id,
-                                    "channel_id": self.channel_id,
-                                    "preferred_region": None,
-                                },
-                            }))
-                        except Exception:
-                            pass
-                threading.Thread(target=_recreate, daemon=True).start()
-            else:
-                C.err("stream", "stream stopped repeatedly by server — stopping session to prevent rate limits.")
-                self.running = False
+            self._stream_recreate_attempts += 1
+            delay = min(15.0, 2.0 * min(self._stream_recreate_attempts, 5))
+            C.warn("stream", f"stream interrupted by server, re-requesting Go Live in {delay:.1f}s (attempt {self._stream_recreate_attempts})...")
+            def _recreate():
+                time.sleep(delay)
+                if self.running and self.ws and not self.ws.closed and self.voice_connected and not self._user_left_vc:
+                    try:
+                        self.ws.send(json.dumps({
+                            "op": 18,
+                            "d": {
+                                "type": "guild",
+                                "guild_id": self.guild_id,
+                                "channel_id": self.channel_id,
+                                "preferred_region": None,
+                            },
+                        }))
+                    except Exception:
+                        pass
+            threading.Thread(target=_recreate, daemon=True).start()
 
         elif event_type == "VOICE_CONNECTION_STATUS":
             status = d.get("state", "")
