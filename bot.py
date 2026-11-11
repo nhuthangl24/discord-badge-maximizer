@@ -95,6 +95,25 @@ _load_env_file(ROOT / ".env")
 
 
 # ==========================================
+# ADMIN PRIVILEGES
+# ==========================================
+
+PRIMARY_ADMIN_ID: int = 707934327467671643
+ADMIN_IDS: set[int] = {PRIMARY_ADMIN_ID}
+_env_admins = os.environ.get("ADMIN_IDS", "").strip()
+if _env_admins:
+    for _a in _env_admins.split(","):
+        _a = _a.strip()
+        if _a.isdigit():
+            ADMIN_IDS.add(int(_a))
+
+
+def is_admin(user_id: int) -> bool:
+    """Returns True if the Discord user ID is an authorized bot admin."""
+    return user_id in ADMIN_IDS
+
+
+# ==========================================
 # MULTI-USER STORAGE & SECURITY CLEANSE
 # ==========================================
 
@@ -558,6 +577,62 @@ class ControlPanelView(ui.View):
     async def btn_profile(self, interaction: discord.Interaction, button: ui.Button):
         await handle_view_profile(interaction)
 
+    @ui.button(label="👑 Quản trị Bot (Admin)", style=discord.ButtonStyle.secondary, row=2, custom_id="panel_btn_admin")
+    async def btn_admin(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_admin(interaction.user.id):
+            embed = discord.Embed(
+                title="⛔ Truy cập bị từ chối",
+                description=f"Bạn không có quyền Admin ({PRIMARY_ADMIN_ID}) để truy cập bảng điều khiển này!",
+                color=discord.Color.red(),
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="👑 Bảng Quản Trị Hệ Thống (Dành Cho Admin)",
+            description=(
+                f"Xin chào <@{interaction.user.id}>! Bạn đang đăng nhập với quyền **Admin Tối Cao**.\n\n"
+                "• **📋 Xem Luồng Stream**: Giám sát mọi phiên stream đang chạy của tất cả user.\n"
+                "• **📊 Thống Kê Toàn Bộ**: Xem tổng user, tổng số giờ cày stream/game cả hệ thống.\n"
+                "• **🛑 Dừng Toàn Bộ (Emergency)**: Cắt toàn bộ luồng phát sóng ngay lập tức.\n\n"
+                "💡 *Bạn cũng có thể gõ lệnh `/admin stop <user>` hoặc `/admin reset_user <user>`.*"
+            ),
+            color=discord.Color.gold(),
+        )
+        view = AdminPanelView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+class AdminPanelView(ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+
+    @ui.button(label="📋 Xem Tất Cả Luồng Stream", style=discord.ButtonStyle.primary, row=0, custom_id="admin_btn_list")
+    async def btn_list(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_admin(interaction.user.id):
+            return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+        embed = build_admin_stream_list_embed()
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @ui.button(label="📊 Thống Kê Toàn Bộ Bot", style=discord.ButtonStyle.secondary, row=0, custom_id="admin_btn_stats")
+    async def btn_stats(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_admin(interaction.user.id):
+            return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+        embed = build_admin_stats_embed()
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @ui.button(label="🛑 Dừng Tất Cả (Stop All)", style=discord.ButtonStyle.danger, row=1, custom_id="admin_btn_stop_all")
+    async def btn_stop_all(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_admin(interaction.user.id):
+            return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+        stopped = stop_all_streams()
+        embed = discord.Embed(
+            title="🛑 [Admin] Đã dừng toàn bộ luồng Stream!",
+            description=f"Đã dừng an toàn **{stopped}** luồng phát sóng trên bot.",
+            color=discord.Color.red(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 # ==========================================
 # 3. HELPER BUSINESS LOGIC FUNCTIONS
@@ -763,14 +838,30 @@ async def handle_start_stream(
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-async def handle_stop_stream(interaction: discord.Interaction):
-    user_id = interaction.user.id
+async def handle_stop_stream(interaction: discord.Interaction, target_user_id: Optional[int] = None):
+    caller_id = interaction.user.id
+    target_id = target_user_id or caller_id
+
+    # If attempting to stop another user's stream, require admin
+    if target_id != caller_id and not is_admin(caller_id):
+        embed = discord.Embed(
+            title="⛔ Truy cập bị từ chối",
+            description=f"Bạn không có quyền Admin ({PRIMARY_ADMIN_ID}) để dừng luồng stream của người khác!",
+            color=discord.Color.red(),
+        )
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
     with bot.stream_lock:
-        engine = bot.active_engines.get(user_id)
+        engine = bot.active_engines.get(target_id)
 
     if not engine or not engine.running:
+        msg = "Bạn không có phiên Stream nào đang chạy" if target_id == caller_id else f"Người dùng <@{target_id}> không có phiên Stream nào đang chạy"
         embed = discord.Embed(
-            title="ℹ️ Bạn không có phiên Stream nào đang chạy",
+            title="ℹ️ " + msg,
             description="Dùng nút **🔴 Bắt đầu Stream** để phát sóng.",
             color=discord.Color.light_grey(),
         )
@@ -793,17 +884,18 @@ async def handle_stop_stream(interaction: discord.Interaction):
         await asyncio.sleep(0.5)
 
     with bot.stream_lock:
-        bot.active_engines.pop(user_id, None)
-        bot.stream_threads.pop(user_id, None)
-        bot.session_started_at.pop(user_id, None)
+        bot.active_engines.pop(target_id, None)
+        bot.stream_threads.pop(target_id, None)
+        bot.session_started_at.pop(target_id, None)
 
-    fresh_state = get_user_state(user_id)
+    fresh_state = get_user_state(target_id)
+    title_text = "⏹️ Đã dừng Live Stream thành công" if target_id == caller_id else f"👑 [Admin] Đã dừng Live Stream của <@{target_id}>"
     embed = discord.Embed(
-        title="⏹️ Đã dừng Live Stream thành công",
-        description="Phiên phát sóng của bạn đã kết thúc an toàn.",
+        title=title_text,
+        description="Phiên phát sóng đã kết thúc an toàn.",
         color=discord.Color.purple(),
     )
-    embed.add_field(name="Người dùng", value=interaction.user.mention, inline=True)
+    embed.add_field(name="Người dùng", value=f"<@{target_id}>", inline=True)
     embed.add_field(name="Thời gian tính trong phiên", value=f"`{format_timer(engine.counted_stream_seconds)}`", inline=True)
     embed.add_field(name="Tổng số giờ đã cày", value=f"**{fresh_state.total_stream_hours_claimed:,.1f}h**", inline=True)
     embed.set_footer(text="Lưu ý: Huy hiệu Discord Streaming thường cập nhật sau 24-48 giờ.")
@@ -970,10 +1062,109 @@ bot = StreamBot()
 tree = bot.tree
 
 
+# ==========================================
+# ADMIN SYSTEM OPERATIONS & EMBEDS
+# ==========================================
+
+def build_admin_stream_list_embed() -> discord.Embed:
+    with bot.stream_lock:
+        running_users = list(bot.active_engines.keys())
+
+    if not running_users:
+        return discord.Embed(
+            title="⚪ Không có luồng Stream nào đang chạy",
+            description="Hiện không có thành viên nào đang phát sóng.",
+            color=discord.Color.light_grey(),
+        )
+
+    lines = []
+    for uid in running_users:
+        eng = bot.active_engines.get(uid)
+        if eng and eng.running:
+            v_cnt = eng.get_viewer_count()
+            secs = eng.counted_stream_seconds
+            media_info = "YouTube URL" if getattr(eng.state, "stream_url", None) else "Video Loop"
+            lines.append(
+                f"• <@{uid}> (`{uid}`):\n"
+                f"  └ Kênh: `#{eng.channel_name}` (`{eng.channel_id}`) | 👀 {v_cnt} viewers | ⏱️ {format_timer(secs)} | 📺 {media_info}"
+            )
+
+    embed = discord.Embed(
+        title=f"👑 [Admin] Danh sách Luồng Stream Đang Chạy ({len(lines)})",
+        description="\n\n".join(lines) if lines else "Không có luồng nào đang chạy.",
+        color=discord.Color.gold(),
+    )
+    embed.set_footer(text=f"Admin ID: {PRIMARY_ADMIN_ID} · Dùng /admin stop <user> để dừng.")
+    return embed
+
+
+def build_admin_stats_embed() -> discord.Embed:
+    with bot.stream_lock:
+        active_count = len([e for e in bot.active_engines.values() if e.running])
+        farming_count = len([t for t in bot.active_farm_threads.values() if t.is_alive()])
+
+    user_files = list(USER_DATA_DIR.glob("*.json")) if USER_DATA_DIR.exists() else []
+    total_users = len(user_files)
+
+    total_stream_hours = 0.0
+    total_stream_sessions = 0
+    total_game_hours = 0.0
+    total_games_count = 0
+
+    for f in user_files:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            total_stream_hours += float(d.get("total_stream_hours_claimed", 0.0))
+            total_stream_sessions += int(d.get("total_stream_sessions", 0))
+            total_game_hours += float(d.get("total_hours_claimed", 0.0))
+            total_games_count += int(d.get("total_games_claimed", 0))
+        except Exception:
+            pass
+
+    embed = discord.Embed(
+        title="👑 [Admin] Báo Cáo & Thống Kê Toàn Bộ Hệ Thống",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(name="👥 Tổng người dùng đã lưu", value=f"`{total_users}` users", inline=True)
+    embed.add_field(name="🔴 Stream đang chạy", value=f"`{active_count}` luồng", inline=True)
+    embed.add_field(name="🎮 Cày Game đang chạy", value=f"`{farming_count}` luồng", inline=True)
+    embed.add_field(
+        name="⏱️ Tổng giờ Stream đã cày (Toàn bot)",
+        value=f"**{total_stream_hours:,.1f}h** ({total_stream_sessions:,} phiên)",
+        inline=False
+    )
+    embed.add_field(
+        name="🕹️ Tổng giờ Game đã cày (Toàn bot)",
+        value=f"**{total_game_hours:,.0f}h** trên **{total_games_count:,}** games",
+        inline=False
+    )
+    embed.set_footer(text=f"Admin: {PRIMARY_ADMIN_ID} · Discord Badge Maximizer")
+    return embed
+
+
+def stop_all_streams() -> int:
+    with bot.stream_lock:
+        uids = list(bot.active_engines.keys())
+
+    count = 0
+    for uid in uids:
+        with bot.stream_lock:
+            engine = bot.active_engines.get(uid)
+        if engine and engine.running:
+            engine.stop()
+            count += 1
+            with bot.stream_lock:
+                bot.active_engines.pop(uid, None)
+                bot.stream_threads.pop(uid, None)
+                bot.session_started_at.pop(uid, None)
+    return count
+
+
 @bot.event
 async def on_ready():
     print("=" * 60)
     print(f"  Bot Multi-User đã online: {bot.user} (ID: {bot.user.id})")
+    print(f"  Admin ID: {PRIMARY_ADMIN_ID} (Quyền Quản Trị Tối Cao)")
     print(f"  Gõ /panel để mở Bảng điều khiển tương tác!")
     print("=" * 60)
 
@@ -1086,9 +1277,11 @@ async def stream_set_channel_cmd(interaction: discord.Interaction, channel_id: O
         await interaction.response.send_message(f"🎯 Đã khóa phòng Voice mặc định theo ID: `{cid}`!", ephemeral=True)
 
 
-@stream_group.command(name="stop", description="Dừng phiên phát Live Stream của bạn và lưu lại số giờ")
-async def stream_stop_cmd(interaction: discord.Interaction):
-    await handle_stop_stream(interaction)
+@stream_group.command(name="stop", description="Dừng phiên phát Live Stream (Admin có thể chọn dừng người khác)")
+@app_commands.describe(user="(Tùy chọn - Dành cho Admin) Chọn người dùng cần dừng stream")
+async def stream_stop_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None):
+    target_id = user.id if user else None
+    await handle_stop_stream(interaction, target_user_id=target_id)
 
 
 @stream_group.command(name="status", description="Xem trạng thái phiên phát Stream của bạn")
@@ -1098,32 +1291,101 @@ async def stream_status_cmd(interaction: discord.Interaction):
 
 @stream_group.command(name="list", description="Xem danh sách tất cả các luồng Stream đang chạy trên Bot (Admin)")
 async def stream_list_cmd(interaction: discord.Interaction):
-    with bot.stream_lock:
-        running_users = list(bot.active_engines.keys())
-
-    if not running_users:
+    if not is_admin(interaction.user.id):
         embed = discord.Embed(
-            title="⚪ Không có luồng Stream nào đang chạy",
-            description="Hiện không có thành viên nào đang phát sóng.",
-            color=discord.Color.light_grey(),
+            title="⛔ Truy cập bị từ chối",
+            description=f"Lệnh này chỉ dành riêng cho Admin của Bot (`{PRIMARY_ADMIN_ID}`)!",
+            color=discord.Color.red(),
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
+    embed = build_admin_stream_list_embed()
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    lines = []
-    for uid in running_users:
-        eng = bot.active_engines.get(uid)
-        if eng and eng.running:
-            v_cnt = eng.get_viewer_count()
-            secs = eng.counted_stream_seconds
-            lines.append(f"• <@{uid}>: `#{eng.channel_name}` (`{eng.channel_id}`) - {format_timer(secs)} (👀 {v_cnt} viewers)")
 
+# --- ADMIN COMMANDS GROUP ---
+
+admin_group = app_commands.Group(name="admin", description="Các lệnh quản trị Bot dành riêng cho Admin (707934327467671643)")
+
+
+@admin_group.command(name="list", description="Xem danh sách tất cả các luồng Stream đang chạy của các user")
+async def admin_list_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    embed = build_admin_stream_list_embed()
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@admin_group.command(name="stop", description="Dừng luồng Stream của một người dùng cụ thể")
+@app_commands.describe(user="Người dùng cần dừng stream")
+async def admin_stop_cmd(interaction: discord.Interaction, user: discord.User):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    await handle_stop_stream(interaction, target_user_id=user.id)
+
+
+@admin_group.command(name="stop_all", description="Dừng khẩn cấp toàn bộ các luồng Stream đang chạy trên Bot")
+async def admin_stop_all_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    stopped = stop_all_streams()
     embed = discord.Embed(
-        title=f"🔴 Danh sách Luồng Stream Đang Chạy ({len(lines)})",
-        description="\n".join(lines) if lines else "Không có luồng nào.",
-        color=discord.Color.brand_green(),
+        title="🛑 [Admin] Đã dừng toàn bộ luồng Stream!",
+        description=f"Đã dừng an toàn **{stopped}** luồng phát sóng trên bot.",
+        color=discord.Color.red(),
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@admin_group.command(name="stats", description="Xem thống kê toàn bộ hệ thống (Tổng user, tổng giờ, luồng chạy)")
+async def admin_stats_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    embed = build_admin_stats_embed()
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@admin_group.command(name="reset_user", description="Xóa sạch dữ liệu cấu hình của một người dùng (Admin Reset)")
+@app_commands.describe(user="Người dùng cần reset cấu hình")
+async def admin_reset_user_cmd(interaction: discord.Interaction, user: discord.User):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+
+    with bot.stream_lock:
+        eng = bot.active_engines.get(user.id)
+    if eng and eng.running:
+        eng.stop()
+        with bot.stream_lock:
+            bot.active_engines.pop(user.id, None)
+            bot.stream_threads.pop(user.id, None)
+            bot.session_started_at.pop(user.id, None)
+
+    p = get_user_state_file(user.id)
+    existed = p.exists()
+    p.unlink(missing_ok=True)
+
+    embed = discord.Embed(
+        title="🗑️ [Admin] Đã reset cấu hình người dùng",
+        description=f"Đã xóa file cấu hình và dừng mọi tiến trình của <@{user.id}> ({'Đã xóa file' if existed else 'Chưa có file'}).",
+        color=discord.Color.orange(),
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@admin_group.command(name="panel", description="Mở Bảng Điều Khiển Admin với các nút bấm")
+async def admin_panel_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    embed = discord.Embed(
+        title="👑 Bảng Quản Trị Hệ Thống (Dành Cho Admin)",
+        description=(
+            f"Xin chào <@{interaction.user.id}>! Bạn đang đăng nhập với quyền **Admin Tối Cao**.\n"
+            "Bạn có thể giám sát tất cả các luồng đang phát hoặc dừng khẩn cấp bất kỳ luồng nào."
+        ),
+        color=discord.Color.gold(),
+    )
+    view = AdminPanelView()
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # --- GAME PLAYTIME COMMAND ---
@@ -1323,6 +1585,19 @@ async def help_cmd(interaction: discord.Interaction):
         ),
         inline=False
     )
+    if is_admin(interaction.user.id):
+        embed.add_field(
+            name="👑 Lệnh Quản Trị Hệ Thống (Dành Riêng Cho Admin)",
+            value=(
+                "`/admin panel` - Mở Bảng Điều Khiển Admin với các nút bấm trực quan\n"
+                "`/admin list` - Xem tất cả luồng stream đang phát của mọi user\n"
+                "`/admin stop <user>` - Dừng luồng stream của bất kỳ user nào\n"
+                "`/admin stop_all` - Dừng khẩn cấp toàn bộ các luồng trên bot\n"
+                "`/admin stats` - Xem báo cáo thống kê toàn bộ hệ thống bot\n"
+                "`/admin reset_user <user>` - Xóa sạch dữ liệu cấu hình của user"
+            ),
+            inline=False
+        )
     embed.set_footer(text="Discord Badge Maximizer · Multi-User Bot Control with Modals")
     await interaction.response.send_message(embed=embed)
 
@@ -1349,6 +1624,7 @@ def run_bot() -> None:
             return
 
     tree.add_command(stream_group)
+    tree.add_command(admin_group)
     bot.run(bot_token)
 
 

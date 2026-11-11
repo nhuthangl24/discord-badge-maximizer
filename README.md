@@ -105,7 +105,22 @@ Khi thấy dòng `[Bot] Đã đồng bộ thành công 8 lệnh Slash. Bot đã 
 
 ---
 
-### 3. Tính năng Đa Người Dùng (Multi-User)
+### 3. Lệnh Quản Trị Hệ Thống Dành Cho Admin (`707934327467671643`)
+
+Admin có toàn quyền kiểm soát bot qua nút **👑 Quản trị Bot (Admin)** trên `/panel` hoặc qua nhóm lệnh `/admin`:
+
+| Lệnh Slash | Chức năng | Chi tiết |
+| :--- | :--- | :--- |
+| **`/admin panel`** | **Bảng Quản Trị Nút Bấm** | Mở bảng điều khiển admin với các nút: Xem luồng, Thống kê, Dừng tất cả khẩn cấp. |
+| **`/admin list`** | **Xem tất cả Luồng Stream** | Liệt kê chi tiết mọi thành viên đang stream, kênh voice, viewers, thời gian chạy và nguồn phát. |
+| **`/admin stop <user>`** | **Dừng Stream của User** | Cưỡng chế dừng phiên phát sóng của bất kỳ thành viên nào. |
+| **`/admin stop_all`** | **Dừng Khẩn Cấp Toàn Bộ** | Dừng toàn bộ các luồng phát đang chạy trên bot cùng một lúc. |
+| **`/admin stats`** | **Thống Kê Toàn Bộ Bot** | Xem tổng số user đăng ký, số luồng đang chạy, tổng số giờ cày stream/game của cả hệ thống. |
+| **`/admin reset_user <user>`** | **Xóa Dữ Liệu User** | Xóa sạch cấu hình và dừng tiến trình của 1 user cụ thể (khi user bị lỗi hoặc quậy phá). |
+
+---
+
+### 4. Tính năng Đa Người Dùng (Multi-User)
 
 Bot hỗ trợ **nhiều thành viên dùng chung** trong cùng một server hoặc nhiều server khác nhau mà không sợ xung đột:
 - **Dữ liệu cô lập 100%**: Mỗi người dùng bấm `/setup` hoặc `/panel` chỉ sửa và lưu token của chính mình (lưu tại `data/users/<discord_id>.json`).
