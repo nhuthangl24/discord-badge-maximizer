@@ -660,14 +660,33 @@ def resolve_media_source(source_url_or_path: str, console: Optional[Console] = N
             if console:
                 console.info("youtube", f"extracting live stream URL from {src}...")
             ydl_opts = {
-                "format": "best[height<=720]/best[height<=480]/best",
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android", "ios", "web"]
+                    }
+                },
+                "format": "best[ext=mp4][height<=720]/best[height<=720]/best[ext=mp4]/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "skip_download": True,
+                "noplaylist": True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(src, download=False)
+                if "entries" in info and info["entries"]:
+                    info = info["entries"][0]
                 stream_url = info.get("url")
+                if not stream_url and info.get("formats"):
+                    for f in reversed(info["formats"]):
+                        if f.get("url") and f.get("vcodec") != "none":
+                            stream_url = f["url"]
+                            break
+                    if not stream_url:
+                        for f in reversed(info["formats"]):
+                            if f.get("url"):
+                                stream_url = f["url"]
+                                break
+
                 if stream_url:
                     if console:
                         title = info.get("title", "YouTube Stream")
@@ -735,7 +754,7 @@ class MediaStreamPump:
             ffmpeg_bin = find_ffmpeg_binary()
 
             # Input options: -re ensures 1x real-time rate, avoiding pipe overflow and audio/video desync
-            v_input = ["-re"]
+            v_input = ["-re", "-stream_loop", "-1"]
             if self.is_url:
                 v_input.extend([
                     "-reconnect", "1",
@@ -743,8 +762,6 @@ class MediaStreamPump:
                     "-reconnect_streamed", "1",
                     "-reconnect_delay_max", "5",
                 ])
-            else:
-                v_input.extend(["-stream_loop", "-1"])
 
             v_cmd = [
                 ffmpeg_bin, "-hide_banner", "-loglevel", "error",
@@ -765,7 +782,7 @@ class MediaStreamPump:
                 "-an", "-f", "h264", "pipe:1"
             ]
 
-            a_input = ["-re"]
+            a_input = ["-re", "-stream_loop", "-1"]
             if self.is_url:
                 a_input.extend([
                     "-reconnect", "1",
@@ -773,8 +790,6 @@ class MediaStreamPump:
                     "-reconnect_streamed", "1",
                     "-reconnect_delay_max", "5",
                 ])
-            else:
-                a_input.extend(["-stream_loop", "-1"])
 
             a_cmd = [
                 ffmpeg_bin, "-hide_banner", "-loglevel", "error",
