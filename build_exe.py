@@ -60,6 +60,10 @@ def build():
         "--hidden-import", "crypto_vault",
         "--hidden-import", "stream",
         "--hidden-import", "games",
+        "--hidden-import", "bot",
+        "--hidden-import", "discord",
+        "--hidden-import", "discord.ui",
+        "--hidden-import", "discord.app_commands",
         str(ROOT / "gui.py"),
     ]
 
