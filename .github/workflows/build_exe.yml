@@ -45,7 +45,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
+          gh release delete v1.0.0 --yes || true
           gh release create v1.0.0 dist/DiscordBadgeMaximizer.exe \
             --title "Discord Badge Maximizer GUI (Windows .exe)" \
-            --notes "Nhấp tải file DiscordBadgeMaximizer.exe đính kèm bên dưới để mở giao diện GUI trên Windows!" \
-            --clobber || gh release upload v1.0.0 dist/DiscordBadgeMaximizer.exe --clobber
+            --notes "Nhấp tải file DiscordBadgeMaximizer.exe đính kèm bên dưới để mở giao diện GUI trên Windows!"
