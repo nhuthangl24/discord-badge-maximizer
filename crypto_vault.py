@@ -61,6 +61,22 @@ VAULT_KEY_FILE = DATA_DIR / ".vault_master.key"
 VAULT_KEY_FILE_ALT = DATA_DIR / "vault_master.key"
 
 
+def _parse_raw_or_hex_key(data: bytes) -> Optional[bytes]:
+    if not data:
+        return None
+    data_str = data.decode("utf-8", errors="ignore").strip()
+    if len(data_str) == 64:
+        try:
+            parsed = bytes.fromhex(data_str)
+            if len(parsed) == 32:
+                return parsed
+        except Exception:
+            pass
+    if len(data) >= 32:
+        return data[:32]
+    return None
+
+
 def sync_user_backup_files() -> int:
     """
     Auto-detects and synchronizes user state backup files from:
@@ -125,26 +141,34 @@ def get_vault_master_key() -> bytes:
     """Retrieves or creates the master secret key for token vault encryption."""
     env_key = os.environ.get("DISCORD_VAULT_KEY") or os.environ.get("TOKEN_VAULT_SECRET")
     if env_key:
-        return hashlib.sha256(env_key.strip().encode("utf-8")).digest()
+        cleaned = env_key.strip()
+        if len(cleaned) == 64:
+            try:
+                parsed = bytes.fromhex(cleaned)
+                if len(parsed) == 32:
+                    return parsed
+            except Exception:
+                pass
+        return hashlib.sha256(cleaned.encode("utf-8")).digest()
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     for kf in [VAULT_KEY_FILE, VAULT_KEY_FILE_ALT, Path.cwd() / "data" / ".vault_master.key", Path.cwd() / "data" / "vault_master.key"]:
         if kf.exists() and kf.is_file():
             try:
-                key_bytes = kf.read_bytes()
-                if len(key_bytes) >= 32:
-                    # Keep both synced
-                    if not VAULT_KEY_FILE.exists():
+                parsed = _parse_raw_or_hex_key(kf.read_bytes())
+                if parsed:
+                    # Keep both synced in binary format
+                    if not VAULT_KEY_FILE.exists() or VAULT_KEY_FILE.stat().st_size != 32:
                         try:
-                            VAULT_KEY_FILE.write_bytes(key_bytes[:32])
+                            VAULT_KEY_FILE.write_bytes(parsed)
                         except Exception:
                             pass
-                    if not VAULT_KEY_FILE_ALT.exists():
+                    if not VAULT_KEY_FILE_ALT.exists() or VAULT_KEY_FILE_ALT.stat().st_size != 32:
                         try:
-                            VAULT_KEY_FILE_ALT.write_bytes(key_bytes[:32])
+                            VAULT_KEY_FILE_ALT.write_bytes(parsed)
                         except Exception:
                             pass
-                    return key_bytes[:32]
+                    return parsed
             except Exception:
                 pass
 
