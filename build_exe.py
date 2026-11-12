@@ -95,20 +95,16 @@ def build():
     # 2. Build Onefile
     run_pyinstaller(mode="onefile")
 
-    # 3. Digitally sign binaries if on Windows
-    if sys.platform == "win32":
-        ps1_script = ROOT / "sign_binary.ps1"
-        if ps1_script.exists():
-            print("\nExecuting digital signature script via PowerShell...")
-            res_sign = subprocess.run([
-                "powershell.exe", "-ExecutionPolicy", "Bypass",
-                "-File", str(ps1_script)
-            ], cwd=str(ROOT))
-            if res_sign.returncode == 0:
-                print("Digital signature applied successfully!")
-            else:
-                print(f"Error: Signing failed with code {res_sign.returncode}")
-                sys.exit(res_sign.returncode)
+    # 3. Digitally sign binaries
+    sign_script = ROOT / "sign_binary.py"
+    if sign_script.exists():
+        print("\nExecuting digital signature script (sign_binary.py)...")
+        res_sign = subprocess.run([sys.executable, str(sign_script)], cwd=str(ROOT))
+        if res_sign.returncode == 0:
+            print("Digital signature applied successfully!")
+        else:
+            print(f"Error: Signing failed with code {res_sign.returncode}")
+            sys.exit(res_sign.returncode)
 
     # 4. Copy install_cert.bat to dist
     bat_file = ROOT / "install_cert.bat"
