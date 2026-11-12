@@ -141,14 +141,27 @@ def main():
         pfx_path.unlink()
         print("Removed temporary cert.pfx.")
 
-    # Copy cer and install_cert.bat to onedir app folder
+    # Copy cer, install_cert.bat and assets to onedir app folder
     onedir_folder = DIST / "DiscordBadgeMaximizer-App"
-    if onedir_folder.exists() and cer_path.exists():
-        shutil.copy2(cer_path, onedir_folder / "DiscordBadgeMaximizer.cer")
+    if onedir_folder.exists():
+        if cer_path.exists():
+            shutil.copy2(cer_path, onedir_folder / "DiscordBadgeMaximizer.cer")
         bat_file = ROOT / "install_cert.bat"
         if bat_file.exists():
             shutil.copy2(bat_file, onedir_folder / "install_cert.bat")
-        print("Copied certificate and installer to DiscordBadgeMaximizer-App folder.")
+        
+        # Ensure data/users directory is ready for users
+        (onedir_folder / "data" / "users").mkdir(parents=True, exist_ok=True)
+
+        # Ensure assets are present
+        dest_assets = onedir_folder / "assets"
+        dest_assets.mkdir(parents=True, exist_ok=True)
+        src_assets = ROOT / "assets"
+        if src_assets.exists():
+            for a_file in src_assets.iterdir():
+                if a_file.is_file():
+                    shutil.copy2(a_file, dest_assets / a_file.name)
+        print("Copied certificate, assets, and prepared data folder in DiscordBadgeMaximizer-App folder.")
 
 if __name__ == "__main__":
     main()

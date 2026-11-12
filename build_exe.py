@@ -37,10 +37,15 @@ def build():
 
 def run_pyinstaller(mode="onefile"):
     sep = ";" if sys.platform == "win32" else ":"
-    video_asset = ROOT / "assets" / "video.mp4"
+    assets_dir = ROOT / "assets"
     data_args = []
-    if video_asset.exists():
-        data_args.extend(["--add-data", f"{video_asset}{sep}assets"])
+    if assets_dir.exists():
+        data_args.extend(["--add-data", f"{assets_dir}{sep}assets"])
+
+    icon_args = []
+    icon_file = assets_dir / "icon.ico"
+    if icon_file.exists():
+        icon_args.extend(["--icon", str(icon_file)])
 
     mode_arg = "--onefile" if mode == "onefile" else "--onedir"
     name = "DiscordBadgeMaximizer" if mode == "onefile" else "DiscordBadgeMaximizer-App"
@@ -50,6 +55,7 @@ def run_pyinstaller(mode="onefile"):
         f"--name={name}",
         mode_arg,
         "--noconsole",
+        *icon_args,
         *data_args,
         "--collect-all", "customtkinter",
         "--collect-all", "imageio_ffmpeg",

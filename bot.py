@@ -55,9 +55,20 @@ from games import (
 )
 import crypto_vault
 
-ROOT = Path(__file__).resolve().parent
-USER_DATA_DIR = ROOT / "data" / "users"
+if getattr(sys, "frozen", False):
+    ROOT = Path(sys.executable).resolve().parent
+else:
+    ROOT = Path(__file__).resolve().parent
+
+DATA_DIR = ROOT / "data"
+USER_DATA_DIR = DATA_DIR / "users"
 USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Auto-sync user backup files if user backed up to data/user or data/*.json
+try:
+    crypto_vault.sync_user_backup_files()
+except Exception as _e:
+    print(f"⚠️ [Data Sync Init] {_e}")
 
 # Auto-expand system PATH to ensure ffmpeg in Homebrew/local paths is found
 _common_bin_dirs = [
@@ -140,36 +151,22 @@ def _cleanse_contaminated_data() -> None:
         except Exception:
             pass
 
-    # 1. Purge any user files that share the exact leaked token or contaminated test state
+    # 1. Purge legacy test files only if matching specific leaked tokens
     if USER_DATA_DIR.exists():
         for f in USER_DATA_DIR.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 tok = data.get("token", "").strip()
                 vtok = data.get("viewer_token", "").strip()
-                cid = data.get("last_channel_id", "").strip()
-                if (tok and tok in leaked_tokens) or (vtok and vtok in leaked_tokens) or (cid == "1569650159191588979"):
+                # Do not delete files if tokens are encrypted (they are user vaults)
+                if not crypto_vault.is_encrypted(tok) and ((tok and tok in leaked_tokens) or (vtok and vtok in leaked_tokens)):
                     f.unlink(missing_ok=True)
                     print(f"🔒 [SECURITY] Đã xóa file cấu hình nhiễm token cũ: {f.name}")
             except Exception:
                 pass
 
-        # 2. Detect duplicate tokens across multiple user IDs (impossible in real multi-user, sign of contamination)
-        token_to_files = {}
-        for f in USER_DATA_DIR.glob("*.json"):
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                tok = data.get("token", "").strip()
-                if tok:
-                    token_to_files.setdefault(tok, []).append(f)
-            except Exception:
-                pass
-
-        for tok, files in token_to_files.items():
-            if len(files) > 1:
-                for f in files:
-                    f.unlink(missing_ok=True)
-                    print(f"🔒 [SECURITY] Đã xóa file trùng lặp token (bị nhiễm): {f.name}")
+        # 2. Re-sync backup files before loading
+        crypto_vault.sync_user_backup_files()
 
 _cleanse_contaminated_data()
 

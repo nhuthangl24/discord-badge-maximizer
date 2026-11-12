@@ -45,11 +45,80 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, modes
 from cryptography.hazmat.primitives.ciphers.algorithms import AES
 
+import sys
+import shutil
+
 MAGIC_PREFIX = "enc:nested_des_aes:v1:"
 
-ROOT_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    ROOT_DIR = Path(sys.executable).resolve().parent
+else:
+    ROOT_DIR = Path(__file__).resolve().parent
+
 DATA_DIR = ROOT_DIR / "data"
+USER_DATA_DIR = DATA_DIR / "users"
 VAULT_KEY_FILE = DATA_DIR / ".vault_master.key"
+VAULT_KEY_FILE_ALT = DATA_DIR / "vault_master.key"
+
+
+def sync_user_backup_files() -> int:
+    """
+    Auto-detects and synchronizes user state backup files from:
+    1. ROOT_DIR / 'data' / 'user' (common typo without 's')
+    2. Path.cwd() / 'data' / 'user'
+    3. Path.cwd() / 'data' / 'users'
+    4. ROOT_DIR / 'data' (any numeric <discord_id>.json placed directly in data/)
+    5. Path.cwd() / 'data' (any numeric <discord_id>.json)
+    6. Also recovers .vault_master.key / vault_master.key if backed up in any candidate folder.
+    Returns the number of recovered user files.
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    recovered = 0
+    candidates = [
+        ROOT_DIR / "data" / "user",
+        Path.cwd() / "data" / "user",
+        Path.cwd() / "data" / "users",
+        ROOT_DIR / "data",
+        Path.cwd() / "data",
+    ]
+
+    # First, look for any backed up master key file
+    for c_dir in candidates:
+        if not c_dir.exists():
+            continue
+        for key_name in [".vault_master.key", "vault_master.key", "master.key", ".master.key"]:
+            candidate_key = c_dir / key_name
+            if candidate_key.exists() and candidate_key.is_file() and candidate_key != VAULT_KEY_FILE and candidate_key != VAULT_KEY_FILE_ALT:
+                try:
+                    k_data = candidate_key.read_bytes()
+                    if len(k_data) >= 32 and (not VAULT_KEY_FILE.exists() or len(VAULT_KEY_FILE.read_bytes()) < 32):
+                        VAULT_KEY_FILE.write_bytes(k_data[:32])
+                        VAULT_KEY_FILE_ALT.write_bytes(k_data[:32])
+                        print(f"🔑 [VAULT RECOVERY] Đã phục hồi master key từ {candidate_key}")
+                except Exception:
+                    pass
+
+    # Second, sync user json files
+    for c_dir in candidates:
+        if not c_dir.exists() or c_dir.resolve() == USER_DATA_DIR.resolve():
+            continue
+        try:
+            for item in c_dir.glob("*.json"):
+                if item.is_file() and item.stem.isdigit():
+                    dest = USER_DATA_DIR / item.name
+                    if not dest.exists():
+                        try:
+                            shutil.copy2(item, dest)
+                            recovered += 1
+                            print(f"👤 [DATA SYNC] Đã đồng bộ file dữ liệu người dùng: {item.name} từ {c_dir}")
+                        except Exception as e:
+                            print(f"⚠️ [DATA SYNC ERROR] {e}")
+        except Exception:
+            pass
+
+    return recovered
 
 
 def get_vault_master_key() -> bytes:
@@ -59,20 +128,34 @@ def get_vault_master_key() -> bytes:
         return hashlib.sha256(env_key.strip().encode("utf-8")).digest()
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if VAULT_KEY_FILE.exists():
-        try:
-            key_bytes = VAULT_KEY_FILE.read_bytes()
-            if len(key_bytes) >= 32:
-                return key_bytes[:32]
-        except Exception:
-            pass
+    for kf in [VAULT_KEY_FILE, VAULT_KEY_FILE_ALT, Path.cwd() / "data" / ".vault_master.key", Path.cwd() / "data" / "vault_master.key"]:
+        if kf.exists() and kf.is_file():
+            try:
+                key_bytes = kf.read_bytes()
+                if len(key_bytes) >= 32:
+                    # Keep both synced
+                    if not VAULT_KEY_FILE.exists():
+                        try:
+                            VAULT_KEY_FILE.write_bytes(key_bytes[:32])
+                        except Exception:
+                            pass
+                    if not VAULT_KEY_FILE_ALT.exists():
+                        try:
+                            VAULT_KEY_FILE_ALT.write_bytes(key_bytes[:32])
+                        except Exception:
+                            pass
+                    return key_bytes[:32]
+            except Exception:
+                pass
 
-    # Generate new random 256-bit vault key
+    # Generate new random 256-bit vault key and save both hidden and visible
     new_key = os.urandom(32)
     try:
         VAULT_KEY_FILE.write_bytes(new_key)
+        VAULT_KEY_FILE_ALT.write_bytes(new_key)
         try:
             os.chmod(VAULT_KEY_FILE, 0o600)
+            os.chmod(VAULT_KEY_FILE_ALT, 0o600)
         except Exception:
             pass
     except Exception:

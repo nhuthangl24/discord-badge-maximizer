@@ -70,8 +70,13 @@ except ImportError:
     except Exception:
         HAS_DAVE = False
 
-ROOT = Path(__file__).resolve().parent
-STATE_FILE = ROOT / "session.json"
+if getattr(sys, "frozen", False):
+    ROOT = Path(sys.executable).resolve().parent
+else:
+    ROOT = Path(__file__).resolve().parent
+
+DATA_DIR = ROOT / "data"
+STATE_FILE = DATA_DIR / "session.json"
 
 # Auto-expand system PATH to ensure ffmpeg and other tools in Homebrew/local paths are found
 _common_bin_dirs = [

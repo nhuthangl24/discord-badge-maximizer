@@ -108,6 +108,25 @@ class DiscordServerManagerApp(ctk.CTk):
         self.geometry("1060x740")
         self.minsize(960, 660)
 
+        # Set Window Icon
+        for candidate_dir in [BUNDLE_DIR / "assets", APP_DIR / "assets", Path.cwd() / "assets"]:
+            ico_path = candidate_dir / "icon.ico"
+            png_path = candidate_dir / "icon.png"
+            if sys.platform == "win32" and ico_path.exists():
+                try:
+                    self.iconbitmap(default=str(ico_path))
+                    break
+                except Exception:
+                    pass
+            elif png_path.exists():
+                try:
+                    from PIL import ImageTk
+                    img = ImageTk.PhotoImage(file=str(png_path))
+                    self.iconphoto(False, img)
+                    break
+                except Exception:
+                    pass
+
         # State management
         self.log_queue = queue.Queue()
         self.gui_logger = GUIConsoleLogger(self.log_queue)
@@ -416,6 +435,12 @@ class DiscordServerManagerApp(ctk.CTk):
         self._refresh_users_table()
 
     def _refresh_users_table(self):
+        # Auto-sync any backup files placed in data/user or data/*.json
+        try:
+            crypto_vault.sync_user_backup_files()
+        except Exception:
+            pass
+
         # Clear existing items
         for w in self.users_scroll.winfo_children():
             w.destroy()
