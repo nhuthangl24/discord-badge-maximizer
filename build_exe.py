@@ -35,19 +35,20 @@ def build():
             except Exception as e:
                 print(f"Warning cleaning {folder}: {e}")
 
-    # Separator for PyInstaller --add-data
+def run_pyinstaller(mode="onefile"):
     sep = ";" if sys.platform == "win32" else ":"
-
-    # Data assets
     video_asset = ROOT / "assets" / "video.mp4"
     data_args = []
     if video_asset.exists():
         data_args.extend(["--add-data", f"{video_asset}{sep}assets"])
 
+    mode_arg = "--onefile" if mode == "onefile" else "--onedir"
+    name = "DiscordBadgeMaximizer" if mode == "onefile" else "DiscordBadgeMaximizer-App"
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--name=DiscordBadgeMaximizer",
-        "--onefile",
+        f"--name={name}",
+        mode_arg,
         "--noconsole",
         *data_args,
         "--collect-all", "customtkinter",
@@ -67,28 +68,51 @@ def build():
         str(ROOT / "gui.py"),
     ]
 
-    print("Running command:")
-    print(" ".join(cmd))
-    print()
-
+    print(f"Running PyInstaller ({mode})...")
     res = subprocess.run(cmd, cwd=str(ROOT))
-    if res.returncode == 0:
-        print()
-        print("=" * 60)
-        dist_dir = ROOT / "dist"
-        exe_name = "DiscordBadgeMaximizer.exe" if sys.platform == "win32" else "DiscordBadgeMaximizer"
-        target_path = dist_dir / exe_name
-        if target_path.exists():
-            print(f"  BUILD SUCCESS!")
-            print(f"  Output binary: {target_path}")
-            print(f"  File size: {target_path.stat().st_size / (1024*1024):.2f} MB")
-        else:
-            print(f"  Build completed in directory: {dist_dir}")
-        print("=" * 60)
-    else:
-        print()
-        print(f"  BUILD FAILED (Code {res.returncode})")
+    if res.returncode != 0:
+        print(f"Error during {mode} build!")
         sys.exit(res.returncode)
+
+def build():
+    print("=" * 60)
+    print("  BUILDING DISCORD BADGE MAXIMIZER (STANDALONE EXE + FOLDER)")
+    print("=" * 60)
+
+    # Clean previous build artifacts
+    for folder in ["build", "dist"]:
+        p = ROOT / folder
+        if p.exists():
+            print(f"Cleaning {folder}/...")
+            try:
+                shutil.rmtree(p)
+            except Exception as e:
+                print(f"Warning cleaning {folder}: {e}")
+
+    # 1. Build Onedir (Less likely to be flagged by antivirus)
+    run_pyinstaller(mode="onedir")
+    app_folder = ROOT / "dist" / "DiscordBadgeMaximizer-App"
+    if app_folder.exists():
+        print("Compressing onedir app to zip archive...")
+        shutil.make_archive(
+            str(ROOT / "dist" / "DiscordBadgeMaximizer-Folder"),
+            "zip",
+            root_dir=str(ROOT / "dist"),
+            base_dir="DiscordBadgeMaximizer-App"
+        )
+        print("Created dist/DiscordBadgeMaximizer-Folder.zip")
+
+    # 2. Build Onefile
+    run_pyinstaller(mode="onefile")
+
+    print()
+    print("=" * 60)
+    print("  ALL BUILDS COMPLETED SUCCESSFULLY!")
+    dist_dir = ROOT / "dist"
+    for item in dist_dir.iterdir():
+        if item.is_file():
+            print(f"  - {item.name} ({item.stat().st_size / (1024*1024):.2f} MB)")
+    print("=" * 60)
 
 if __name__ == "__main__":
     build()
