@@ -50,13 +50,16 @@ jobs:
         shell: bash
         run: |
           gh release delete v1.0.0 --yes || true
+          cat << 'EOF' > release_notes.md
+          ### Cac tep tai ve:
+          - **DiscordBadgeMaximizer.exe**: File don da duoc KY SO DIEN TU (Authenticode SHA256 + DigiCert Timestamp).
+          - **DiscordBadgeMaximizer-Folder.zip**: Ban thu muc giai nen ra chay (Da ky so, khong giai nen vao Temp, an toan 100%).
+          - **install_cert.bat & DiscordBadgeMaximizer.cer**: Chay file .bat nay 1 lan (Run as Administrator) de them Chung chi so vao he thong Windows, giup SmartScreen va Windows Defender tin tuong tuyet doi 100%!
+          EOF
           gh release create v1.0.0 \
             dist/DiscordBadgeMaximizer.exe \
             dist/DiscordBadgeMaximizer-Folder.zip \
             dist/DiscordBadgeMaximizer.cer \
             dist/install_cert.bat \
             --title "Discord Badge Maximizer GUI (Windows .exe, Zip & Digital Certificate)" \
-            --notes "### Các tệp tải về:
-- **DiscordBadgeMaximizer.exe**: File đơn đã được KÝ SỐ ĐIỆN TỬ (Authenticode SHA256 + DigiCert Timestamp).
-- **DiscordBadgeMaximizer-Folder.zip**: Bản thư mục giải nén ra chạy (Đã ký số, không giải nén vào Temp, an toàn 100%).
-- **install_cert.bat & DiscordBadgeMaximizer.cer**: Chạy file .bat này 1 lần (Run as Administrator) để thêm Chứng chỉ số vào hệ thống Windows, giúp SmartScreen và Windows Defender tin tưởng tuyệt đối 100%!"
+            --notes-file release_notes.md
