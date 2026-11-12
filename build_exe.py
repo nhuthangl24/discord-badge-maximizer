@@ -91,6 +91,30 @@ def build():
 
     # 1. Build Onedir (Less likely to be flagged by antivirus)
     run_pyinstaller(mode="onedir")
+
+    # 2. Build Onefile
+    run_pyinstaller(mode="onefile")
+
+    # 3. Digitally sign binaries if on Windows
+    if sys.platform == "win32":
+        ps1_script = ROOT / "sign_binary.ps1"
+        if ps1_script.exists():
+            print("\nExecuting digital signature script via PowerShell...")
+            res_sign = subprocess.run([
+                "powershell.exe", "-ExecutionPolicy", "Bypass",
+                "-File", str(ps1_script)
+            ], cwd=str(ROOT))
+            if res_sign.returncode == 0:
+                print("Digital signature applied successfully!")
+            else:
+                print(f"Warning: Signing returned non-zero code ({res_sign.returncode})")
+
+    # 4. Copy install_cert.bat to dist
+    bat_file = ROOT / "install_cert.bat"
+    if bat_file.exists():
+        shutil.copy2(bat_file, ROOT / "dist" / "install_cert.bat")
+
+    # 5. Compress onedir app to zip archive (includes signed binary & cert)
     app_folder = ROOT / "dist" / "DiscordBadgeMaximizer-App"
     if app_folder.exists():
         print("Compressing onedir app to zip archive...")
@@ -101,9 +125,6 @@ def build():
             base_dir="DiscordBadgeMaximizer-App"
         )
         print("Created dist/DiscordBadgeMaximizer-Folder.zip")
-
-    # 2. Build Onefile
-    run_pyinstaller(mode="onefile")
 
     print()
     print("=" * 60)

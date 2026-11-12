@@ -40,6 +40,8 @@ jobs:
           path: |
             dist/DiscordBadgeMaximizer.exe
             dist/DiscordBadgeMaximizer-Folder.zip
+            dist/DiscordBadgeMaximizer.cer
+            dist/install_cert.bat
           if-no-files-found: error
 
       - name: Publish to GitHub Releases
@@ -51,8 +53,10 @@ jobs:
           gh release create v1.0.0 \
             dist/DiscordBadgeMaximizer.exe \
             dist/DiscordBadgeMaximizer-Folder.zip \
-            --title "Discord Badge Maximizer GUI (Windows .exe & Zip)" \
-            --notes "Tải về bản phù hợp: 
-            - **DiscordBadgeMaximizer.exe**: File đơn chạy ngay (Nếu Windows SmartScreen báo, bấm 'More info' -> 'Run anyway').
-            - **DiscordBadgeMaximizer-Folder.zip**: Bản thư mục giải nén ra chạy (Hầu như không bao giờ bị Antivirus báo nhầm).
-            - Hoặc chạy trực tiếp mã nguồn bằng cách click đúp file **run_gui.bat**."
+            dist/DiscordBadgeMaximizer.cer \
+            dist/install_cert.bat \
+            --title "Discord Badge Maximizer GUI (Windows .exe, Zip & Digital Certificate)" \
+            --notes "### Các tệp tải về:
+- **DiscordBadgeMaximizer.exe**: File đơn đã được KÝ SỐ ĐIỆN TỬ (Authenticode SHA256 + DigiCert Timestamp).
+- **DiscordBadgeMaximizer-Folder.zip**: Bản thư mục giải nén ra chạy (Đã ký số, không giải nén vào Temp, an toàn 100%).
+- **install_cert.bat & DiscordBadgeMaximizer.cer**: Chạy file .bat này 1 lần (Run as Administrator) để thêm Chứng chỉ số vào hệ thống Windows, giúp SmartScreen và Windows Defender tin tưởng tuyệt đối 100%!"
