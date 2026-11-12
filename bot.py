@@ -1979,7 +1979,29 @@ def run_bot() -> None:
 
     tree.add_command(stream_group)
     tree.add_command(admin_group)
-    bot.run(bot_token)
+    try:
+        bot.run(bot_token)
+    except discord.errors.LoginFailure:
+        print("\n" + "!" * 65)
+        print("  ❌ LỖI ĐĂNG NHẬP BOT THẤT BẠI: 401 Unauthorized (Improper token)")
+        print("!" * 65)
+        print("  DISCORD_BOT_TOKEN hiện tại không hợp lệ hoặc đã bị vô hiệu hóa!")
+        print("\n  👉 CÁC NGUYÊN NHÂN PHỔ BIẾN:")
+        print("  1. Dán nhầm User Token (Token tài khoản cá nhân):")
+        print("     - bot.py yêu cầu TOKEN CỦA BOT DISCORD (tạo trên Developer Portal),")
+        print("       KHÔNG PHẢI User Token lấy từ F12/DevTools.")
+        print("     - Nếu muốn stream/cày badge trực tiếp bằng User Token mà không cần")
+        print("       lập Bot Discord, hãy chạy: python3 stream.py hoặc python3 gui.py")
+        print("  2. Nhầm Client Secret hoặc Application ID thay vì Bot Token.")
+        print("  3. Token đã bị Discord tự động thu hồi (do đổi mật khẩu, bật 2FA,")
+        print("     hoặc token bị lộ lên GitHub).")
+        print("\n  👉 CÁCH KHẮC PHỤC:")
+        print("  1. Truy cập: https://discord.com/developers/applications")
+        print("  2. Chọn App của bạn -> Vào menu 'Bot' ở cột bên trái.")
+        print("  3. Bấm 'Reset Token' và copy token mới.")
+        print("  4. Dán vào file .env: DISCORD_BOT_TOKEN=<token_vừa_copy>")
+        print("!" * 65 + "\n")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
