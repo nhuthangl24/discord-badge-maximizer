@@ -39,9 +39,29 @@
 
 # 🇻🇳 HƯỚNG DẪN TIẾNG VIỆT
 
-Dự án hỗ trợ 2 cách sử dụng:
-1. **Chế độ Discord Bot (`bot.py`):** Điều khiển 100% qua lệnh Slash (`/`) trên Discord, tự động bốc phòng voice ngẫu nhiên mà không cần nhập ID kênh.
-2. **Chế độ Terminal / Script (`stream.py` & `games.py`):** Chạy trực tiếp qua menu dòng lệnh hoặc tự động hóa bằng CLI flag trên VPS.
+Dự án hỗ trợ 3 cách sử dụng linh hoạt:
+1. **🖥️ Chế độ Giao diện Đồ Họa Windows EXE (`DiscordBadgeMaximizer.exe` / `gui.py`):** Dành cho người dùng máy tính Windows, có giao diện đẹp mắt (Dark Theme Discord), nút bấm trực quan, live log và theo dõi thời gian thực.
+2. **🤖 Chế độ Discord Bot (`bot.py`):** Điều khiển 100% qua lệnh Slash (`/`) trên Discord, tự động bốc phòng voice ngẫu nhiên mà không cần nhập ID kênh.
+3. **⌨️ Chế độ Terminal / Script (`stream.py` & `games.py`):** Chạy trực tiếp qua menu dòng lệnh hoặc tự động hóa bằng CLI flag trên VPS.
+
+---
+
+### 🌟 0. Chế độ Giao diện Desktop Windows EXE (GUI Edition) ⭐
+
+Nếu bạn dùng máy tính cá nhân và muốn có giao diện đồ họa trực quan (không cần gõ lệnh dòng lệnh):
+
+#### 📥 Cách tải bản EXE:
+1. Vào mục **Releases** trên GitHub hoặc tab **Actions** để tải file `DiscordBadgeMaximizer.exe`.
+2. Mở file `DiscordBadgeMaximizer.exe` (không cần cài đặt Python).
+3. Dán Token của bạn vào, chọn chế độ (Stream hoặc Cày Game) và bấm **🔴 BẮT ĐẦU**!
+
+#### 🛠️ Tự chạy hoặc build trên máy tính:
+- Chạy trực tiếp qua Python:
+  ```bash
+  python gui.py
+  ```
+- Tự đóng gói thành file `.exe`:
+  Nhấp đúp chuột vào file **`build.bat`** (hoặc chạy lệnh `python build_exe.py`). File EXE hoàn chỉnh sẽ nằm trong thư mục `dist/DiscordBadgeMaximizer.exe`.
 
 ---
 
