@@ -107,7 +107,8 @@ def build():
             if res_sign.returncode == 0:
                 print("Digital signature applied successfully!")
             else:
-                print(f"Warning: Signing returned non-zero code ({res_sign.returncode})")
+                print(f"Error: Signing failed with code {res_sign.returncode}")
+                sys.exit(res_sign.returncode)
 
     # 4. Copy install_cert.bat to dist
     bat_file = ROOT / "install_cert.bat"

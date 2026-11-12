@@ -41,7 +41,7 @@ if (Test-Path $onefileExe) {
         Set-AuthenticodeSignature -FilePath $onefileExe -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
         Write-Host "Successfully signed $onefileExe with DigiCert Timestamp!" -ForegroundColor Green
     } catch {
-        Write-Host "Warning signing $onefileExe: $_" -ForegroundColor Red
+        Write-Host "Warning signing $onefileExe - $_" -ForegroundColor Red
     }
 }
 
@@ -53,7 +53,7 @@ if (Test-Path $onedirExe) {
         Set-AuthenticodeSignature -FilePath $onedirExe -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
         Write-Host "Successfully signed $onedirExe with DigiCert Timestamp!" -ForegroundColor Green
     } catch {
-        Write-Host "Warning signing $onedirExe: $_" -ForegroundColor Red
+        Write-Host "Warning signing $onedirExe - $_" -ForegroundColor Red
     }
 
     # Copy .cer and install_cert.bat into the onedir folder so the zip includes them
