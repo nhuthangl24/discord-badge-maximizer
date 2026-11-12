@@ -10,6 +10,14 @@ import shutil
 import subprocess
 from pathlib import Path
 
+# Fix Windows console encoding issues for Unicode characters
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = Path(__file__).resolve().parent
 
 def build():
@@ -67,15 +75,15 @@ def build():
         exe_name = "DiscordBadgeMaximizer.exe" if sys.platform == "win32" else "DiscordBadgeMaximizer"
         target_path = dist_dir / exe_name
         if target_path.exists():
-            print(f"  BUILD THÀNH CÔNG!")
-            print(f"  File thành phẩm: {target_path}")
-            print(f"  Kích thước: {target_path.stat().st_size / (1024*1024):.2f} MB")
+            print(f"  BUILD SUCCESS!")
+            print(f"  Output binary: {target_path}")
+            print(f"  File size: {target_path.stat().st_size / (1024*1024):.2f} MB")
         else:
-            print(f"  Build hoàn tất trong thư mục: {dist_dir}")
+            print(f"  Build completed in directory: {dist_dir}")
         print("=" * 60)
     else:
         print()
-        print(f"  BUILD THẤT BẠI (Code {res.returncode})")
+        print(f"  BUILD FAILED (Code {res.returncode})")
         sys.exit(res.returncode)
 
 if __name__ == "__main__":

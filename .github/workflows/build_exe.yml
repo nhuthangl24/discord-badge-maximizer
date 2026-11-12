@@ -28,6 +28,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Build Standalone Windows EXE
+        env:
+          PYTHONIOENCODING: "utf-8"
         run: |
           python build_exe.py
 
@@ -38,24 +40,12 @@ jobs:
           path: dist/DiscordBadgeMaximizer.exe
           if-no-files-found: error
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
-        with:
-          tag_name: latest-release
-          name: "Discord Badge Maximizer GUI (Windows .exe)"
-          body: |
-            ## ⚡ Discord Badge Maximizer - Bản GUI cho Windows (.exe)
-            
-            - **Giao diện đồ họa (GUI) hiện đại**, thiết kế chuẩn Dark Theme Discord.
-            - **Live Stream 24/7 (Streaming Badge)**: Tự động phát video, auto-resilience 24/7 không ngắt kết nối.
-            - **Cày Giờ Chơi Game (Gamer Badge)**: Tùy chọn số lượng game và số giờ cho mỗi game.
-            - **Kho bảo mật Token Vault**: Mã hóa 2 lớp TripleDES + AES-256 an toàn.
-            
-            ### 📥 Hướng dẫn tải & sử dụng:
-            1. Tải file `DiscordBadgeMaximizer.exe` đính kèm bên dưới.
-            2. Nhấp đúp chuột vào file `DiscordBadgeMaximizer.exe` để mở giao diện GUI.
-            3. Dán Token Discord của bạn và bấm **🔴 Bắt Đầu Stream** hoặc **🚀 Bắt Đầu Cày Game**!
-          files: dist/DiscordBadgeMaximizer.exe
+      - name: Publish to GitHub Releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create v1.0.0 dist/DiscordBadgeMaximizer.exe \
+            --title "Discord Badge Maximizer GUI (Windows .exe)" \
+            --notes "Nhấp tải file DiscordBadgeMaximizer.exe đính kèm bên dưới để mở giao diện GUI trên Windows!" \
+            --clobber || gh release upload v1.0.0 dist/DiscordBadgeMaximizer.exe --clobber
