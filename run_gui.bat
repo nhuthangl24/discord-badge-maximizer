@@ -19,11 +19,7 @@ if %errorlevel% neq 0 (
 echo Checking dependencies...
 pip install -r requirements.txt >nul 2>&1
 
-:: Launch GUI
+:: Launch GUI with pythonw (Zero terminal / No console window)
 echo Launching GUI...
-python gui.py
-if %errorlevel% neq 0 (
-    echo.
-    echo [ERROR] Program exited with an error.
-    pause
-)
+start "" pythonw gui.py
+exit /b 0

@@ -69,8 +69,7 @@ ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 ENV_FILE = APP_DIR / ".env"
-USER_DATA_DIR = APP_DIR / "data" / "users"
-USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+USER_DATA_DIR = crypto_vault.get_user_data_dir()
 
 
 class GUIConsoleLogger:
@@ -285,9 +284,26 @@ class DiscordServerManagerApp(ctk.CTk):
         self.entry_admin_id = ctk.CTkEntry(left_frame, placeholder_text="707934327467671643")
         self.entry_admin_id.grid(row=2, column=1, padx=(0, 15), pady=8, sticky="ew")
 
+        # Data Directory Input & Custom Picker
+        ctk.CTkLabel(left_frame, text="Thư mục Data:", font=ctk.CTkFont(size=13)).grid(row=3, column=0, padx=15, pady=8, sticky="w")
+        data_dir_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+        data_dir_frame.grid(row=3, column=1, padx=(0, 15), pady=8, sticky="ew")
+        data_dir_frame.grid_columnconfigure(0, weight=1)
+
+        self.entry_data_dir = ctk.CTkEntry(data_dir_frame)
+        self.entry_data_dir.insert(0, str(crypto_vault.get_data_dir()))
+        self.entry_data_dir.configure(state="readonly")
+        self.entry_data_dir.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+
+        btn_browse_data = ctk.CTkButton(data_dir_frame, text="📁 Đổi Thư Mục...", width=110, height=28, fg_color="#383a40", hover_color="#404249", command=self._browse_data_dir_action)
+        btn_browse_data.grid(row=0, column=1, padx=(0, 4), sticky="e")
+
+        btn_open_data = ctk.CTkButton(data_dir_frame, text="📂 Mở", width=55, height=28, fg_color="#383a40", hover_color="#404249", command=self._open_data_dir_action)
+        btn_open_data.grid(row=0, column=2, sticky="e")
+
         # Show/Hide Token Toggle & Save Config
         btn_row = ctk.CTkFrame(left_frame, fg_color="transparent")
-        btn_row.grid(row=3, column=1, padx=(0, 15), pady=(0, 15), sticky="ew")
+        btn_row.grid(row=4, column=1, padx=(0, 15), pady=(0, 15), sticky="ew")
         btn_row.grid_columnconfigure(1, weight=1)
 
         self.show_bot_token_var = ctk.BooleanVar(value=False)
@@ -299,10 +315,10 @@ class DiscordServerManagerApp(ctk.CTk):
 
         # Primary Server Controls
         lbl_sec2 = ctk.CTkLabel(left_frame, text="🎮 Bảng Điều Khiển Server", font=ctk.CTkFont(size=15, weight="bold"), text_color="#ffffff")
-        lbl_sec2.grid(row=4, column=0, columnspan=2, padx=15, pady=(15, 10), sticky="w")
+        lbl_sec2.grid(row=5, column=0, columnspan=2, padx=15, pady=(15, 10), sticky="w")
 
         btn_box = ctk.CTkFrame(left_frame, fg_color="transparent")
-        btn_box.grid(row=5, column=0, columnspan=2, padx=15, pady=(5, 15), sticky="ew")
+        btn_box.grid(row=6, column=0, columnspan=2, padx=15, pady=(5, 15), sticky="ew")
         btn_box.grid_columnconfigure((0, 1), weight=1)
 
         self.btn_start_server = ctk.CTkButton(
@@ -343,10 +359,10 @@ class DiscordServerManagerApp(ctk.CTk):
 
         # Quick Admin Operations
         lbl_sec3 = ctk.CTkLabel(left_frame, text="⚡ Thao Tác Nhanh Toàn Hệ Thống", font=ctk.CTkFont(size=14, weight="bold"), text_color="#ffffff")
-        lbl_sec3.grid(row=6, column=0, columnspan=2, padx=15, pady=(15, 8), sticky="w")
+        lbl_sec3.grid(row=7, column=0, columnspan=2, padx=15, pady=(15, 8), sticky="w")
 
         admin_box = ctk.CTkFrame(left_frame, fg_color="transparent")
-        admin_box.grid(row=7, column=0, columnspan=2, padx=15, pady=(0, 15), sticky="ew")
+        admin_box.grid(row=8, column=0, columnspan=2, padx=15, pady=(0, 15), sticky="ew")
         admin_box.grid_columnconfigure((0, 1, 2), weight=1)
 
         btn_restart_all = ctk.CTkButton(
@@ -451,7 +467,7 @@ class DiscordServerManagerApp(ctk.CTk):
             lbl = ctk.CTkLabel(self.users_scroll, text=h, font=ctk.CTkFont(size=12, weight="bold"), text_color="#949ba4")
             lbl.grid(row=0, column=col, padx=10, pady=(8, 10), sticky="w")
 
-        user_files = list(USER_DATA_DIR.glob("*.json")) if USER_DATA_DIR.exists() else []
+        user_files = list(crypto_vault.get_user_data_dir().glob("*.json"))
         if not user_files:
             empty_lbl = ctk.CTkLabel(self.users_scroll, text="Chưa có người dùng nào đăng ký cấu hình trên bot.", font=ctk.CTkFont(size=13), text_color="#949ba4")
             empty_lbl.grid(row=1, column=0, columnspan=4, padx=20, pady=30)
@@ -573,6 +589,31 @@ class DiscordServerManagerApp(ctk.CTk):
         messagebox.showinfo("Đã Lưu", "Cấu hình .env đã được lưu thành công!")
         self.gui_logger.write("✓ Đã lưu file cấu hình .env thành công.\n")
 
+    def _browse_data_dir_action(self):
+        chosen = filedialog.askdirectory(title="Chọn Thư Mục Chứa Dữ Liệu Bot")
+        if chosen:
+            new_dir = crypto_vault.set_custom_data_dir(chosen)
+            self.entry_data_dir.configure(state="normal")
+            self.entry_data_dir.delete(0, "end")
+            self.entry_data_dir.insert(0, str(new_dir))
+            self.entry_data_dir.configure(state="readonly")
+            self._refresh_users_table()
+            self.gui_logger.write(f"✓ Đã chuyển thư mục lưu trữ dữ liệu sang:\n  {new_dir}\n")
+            messagebox.showinfo("Đã Cập Nhật", f"Đã chuyển vị trí thư mục dữ liệu thành công:\n{new_dir}")
+
+    def _open_data_dir_action(self):
+        d = crypto_vault.get_data_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(d))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(d)])
+            else:
+                subprocess.Popen(["xdg-open", str(d)])
+        except Exception as e:
+            messagebox.showerror("Lỗi Mở Thư Mục", f"Không thể mở thư mục: {e}")
+
     def _start_server_action(self):
         token = self.entry_bot_token.get().strip()
         if not token:
@@ -585,6 +626,7 @@ class DiscordServerManagerApp(ctk.CTk):
         child_env = os.environ.copy()
         child_env["DISCORD_BOT_TOKEN"] = token
         child_env["PRIMARY_ADMIN_ID"] = self.entry_admin_id.get().strip() or "707934327467671643"
+        child_env["DISCORD_DATA_DIR"] = str(crypto_vault.get_data_dir())
         child_env["PYTHONUNBUFFERED"] = "1"
         child_env["PYTHONIOENCODING"] = "utf-8"
 
@@ -593,6 +635,15 @@ class DiscordServerManagerApp(ctk.CTk):
             cmd = [sys.executable, "--server"]
         else:
             cmd = [sys.executable, str(APP_DIR / "gui.py"), "--server"]
+
+        # 100% Hide Console Window on Windows - Absolutely NO extra terminal
+        creationflags = 0
+        startupinfo = None
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
 
         try:
             self.server_proc = subprocess.Popen(
@@ -603,6 +654,8 @@ class DiscordServerManagerApp(ctk.CTk):
                 bufsize=1,
                 cwd=str(APP_DIR),
                 env=child_env,
+                creationflags=creationflags,
+                startupinfo=startupinfo,
             )
             self.server_running = True
             self.server_start_time = time.time()

@@ -136,6 +136,11 @@ def main():
         # Sign onedir exe
         sign_binary(DIST / "DiscordBadgeMaximizer-App" / "DiscordBadgeMaximizer-App.exe", pfx_path, signtool)
 
+        # Sign Setup installer if present
+        setup_exe = DIST / "DiscordBadgeMaximizer-Setup.exe"
+        if setup_exe.exists():
+            sign_binary(setup_exe, pfx_path, signtool)
+
     # Clean up sensitive PFX private key file from dist
     if pfx_path.exists():
         pfx_path.unlink()

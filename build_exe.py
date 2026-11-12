@@ -117,7 +117,29 @@ def build():
     if bat_file.exists():
         shutil.copy2(bat_file, ROOT / "dist" / "install_cert.bat")
 
-    # 5. Compress onedir app to zip archive (includes signed binary & cert)
+    # 5. Build Windows Setup Installer if Inno Setup is installed
+    iss_file = ROOT / "installer.iss"
+    iscc_path = shutil.which("iscc") or shutil.which("ISCC.exe")
+    if not iscc_path:
+        for c_path in [
+            Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
+            Path(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
+        ]:
+            if c_path.exists():
+                iscc_path = str(c_path)
+                break
+
+    if iscc_path and iss_file.exists():
+        print("\nCompiling Windows Setup Installer with Inno Setup...")
+        res_iss = subprocess.run([iscc_path, str(iss_file)], cwd=str(ROOT))
+        if res_iss.returncode == 0:
+            print("Successfully created DiscordBadgeMaximizer-Setup.exe!")
+            if sign_script.exists():
+                subprocess.run([sys.executable, str(sign_script)], cwd=str(ROOT))
+        else:
+            print(f"Warning: Inno Setup returned non-zero code ({res_iss.returncode})")
+
+    # 6. Compress onedir app to zip archive (includes signed binary & cert)
     app_folder = ROOT / "dist" / "DiscordBadgeMaximizer-App"
     if app_folder.exists():
         print("Compressing onedir app to zip archive...")

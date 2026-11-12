@@ -60,9 +60,8 @@ if getattr(sys, "frozen", False):
 else:
     ROOT = Path(__file__).resolve().parent
 
-DATA_DIR = ROOT / "data"
-USER_DATA_DIR = DATA_DIR / "users"
-USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR = crypto_vault.get_data_dir()
+USER_DATA_DIR = crypto_vault.get_user_data_dir()
 
 # Auto-sync user backup files if user backed up to data/user or data/*.json
 try:

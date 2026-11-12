@@ -75,7 +75,7 @@ if getattr(sys, "frozen", False):
 else:
     ROOT = Path(__file__).resolve().parent
 
-DATA_DIR = ROOT / "data"
+DATA_DIR = crypto_vault.get_data_dir()
 STATE_FILE = DATA_DIR / "session.json"
 
 # Auto-expand system PATH to ensure ffmpeg and other tools in Homebrew/local paths are found

@@ -22,12 +22,13 @@ jobs:
           python-version: "3.10"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install dependencies & Inno Setup
         run: |
+          choco install innosetup --no-progress -y
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build Standalone Windows EXE
+      - name: Build Standalone Windows EXE & Setup Installer
         env:
           PYTHONIOENCODING: "utf-8"
         run: |
@@ -38,6 +39,7 @@ jobs:
         with:
           name: DiscordBadgeMaximizer-Windows
           path: |
+            dist/DiscordBadgeMaximizer-Setup.exe
             dist/DiscordBadgeMaximizer.exe
             dist/DiscordBadgeMaximizer-Folder.zip
             dist/DiscordBadgeMaximizer.cer
@@ -52,14 +54,16 @@ jobs:
           gh release delete v1.0.0 --yes || true
           cat << 'EOF' > release_notes.md
           ### Cac tep tai ve:
-          - **DiscordBadgeMaximizer.exe**: File don da duoc KY SO DIEN TU (Authenticode SHA256 + DigiCert Timestamp).
-          - **DiscordBadgeMaximizer-Folder.zip**: Ban thu muc giai nen ra chay (Da ky so, khong giai nen vao Temp, an toan 100%).
-          - **install_cert.bat & DiscordBadgeMaximizer.cer**: Chay file .bat nay 1 lan (Run as Administrator) de them Chung chi so vao he thong Windows, giup SmartScreen va Windows Defender tin tuong tuyet doi 100%!
+          - **DiscordBadgeMaximizer-Setup.exe**: Trinh cai dat Installer chuan Windows (Tu tao shortcut Desktop, Start Menu, chay ung dung GUI 100% khong kem bat ky terminal nao).
+          - **DiscordBadgeMaximizer.exe**: File don portable chay ngay.
+          - **DiscordBadgeMaximizer-Folder.zip**: Ban thu muc zip giai nen ra chay.
+          - **install_cert.bat & DiscordBadgeMaximizer.cer**: Them chung chi so de Windows tin tuong tuyet doi.
           EOF
           gh release create v1.0.0 \
+            dist/DiscordBadgeMaximizer-Setup.exe \
             dist/DiscordBadgeMaximizer.exe \
             dist/DiscordBadgeMaximizer-Folder.zip \
             dist/DiscordBadgeMaximizer.cer \
             dist/install_cert.bat \
-            --title "Discord Badge Maximizer GUI (Windows .exe, Zip & Digital Certificate)" \
+            --title "Discord Badge Maximizer GUI (Windows Setup Installer & Portable)" \
             --notes-file release_notes.md

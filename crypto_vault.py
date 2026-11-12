@@ -55,10 +55,97 @@ if getattr(sys, "frozen", False):
 else:
     ROOT_DIR = Path(__file__).resolve().parent
 
-DATA_DIR = ROOT_DIR / "data"
-USER_DATA_DIR = DATA_DIR / "users"
-VAULT_KEY_FILE = DATA_DIR / ".vault_master.key"
-VAULT_KEY_FILE_ALT = DATA_DIR / "vault_master.key"
+
+def get_config_file() -> Path:
+    """Returns the persistent global configuration file path."""
+    if sys.platform == "win32":
+        app_data = os.environ.get("APPDATA")
+        if app_data:
+            base = Path(app_data) / "DiscordBadgeMaximizer"
+            base.mkdir(parents=True, exist_ok=True)
+            return base / "config.json"
+    home = Path.home() / ".discord_badge_maximizer"
+    home.mkdir(parents=True, exist_ok=True)
+    return home / "config.json"
+
+
+def get_data_dir() -> Path:
+    """
+    Returns the active Data Directory.
+    Allows data to be stored anywhere on the PC independently of where the app is installed.
+    Priority:
+    1. Environment variable DISCORD_DATA_DIR
+    2. Persistent custom path saved in config.json
+    3. Local 'data' folder next to executable or cwd (if exists)
+    4. Default persistent %APPDATA%/DiscordBadgeMaximizer/data
+    """
+    env_dir = os.environ.get("DISCORD_DATA_DIR")
+    if env_dir:
+        p = Path(env_dir).resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    cfg_file = get_config_file()
+    if cfg_file.exists():
+        try:
+            cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+            custom_path = cfg.get("data_dir")
+            if custom_path:
+                p = Path(custom_path).resolve()
+                p.mkdir(parents=True, exist_ok=True)
+                return p
+        except Exception:
+            pass
+
+    # Local data folder next to application executable
+    local_data = ROOT_DIR / "data"
+    if local_data.exists() and local_data.is_dir():
+        return local_data.resolve()
+
+    # Standard persistent AppData directory
+    if sys.platform == "win32" and os.environ.get("APPDATA"):
+        d = Path(os.environ["APPDATA"]) / "DiscordBadgeMaximizer" / "data"
+    else:
+        d = Path.home() / ".discord_badge_maximizer" / "data"
+    d.mkdir(parents=True, exist_ok=True)
+    return d.resolve()
+
+
+def set_custom_data_dir(new_path: Union[str, Path]) -> Path:
+    """Sets and persists a custom data directory anywhere on the system."""
+    p = Path(new_path).resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "users").mkdir(parents=True, exist_ok=True)
+
+    cfg_file = get_config_file()
+    cfg = {}
+    if cfg_file.exists():
+        try:
+            cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    cfg["data_dir"] = str(p)
+    cfg_file.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    os.environ["DISCORD_DATA_DIR"] = str(p)
+    sync_user_backup_files()
+    return p
+
+
+def get_user_data_dir() -> Path:
+    d = get_data_dir() / "users"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_vault_key_files() -> Tuple[Path, Path]:
+    d = get_data_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d / ".vault_master.key", d / "vault_master.key"
+
+
+DATA_DIR = get_data_dir()
+USER_DATA_DIR = get_user_data_dir()
+VAULT_KEY_FILE, VAULT_KEY_FILE_ALT = get_vault_key_files()
 
 
 def _parse_raw_or_hex_key(data: bytes) -> Optional[bytes]:
@@ -88,17 +175,24 @@ def sync_user_backup_files() -> int:
     6. Also recovers .vault_master.key / vault_master.key if backed up in any candidate folder.
     Returns the number of recovered user files.
     """
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    active_data = get_data_dir()
+    active_users = get_user_data_dir()
+    active_data.mkdir(parents=True, exist_ok=True)
+    active_users.mkdir(parents=True, exist_ok=True)
 
     recovered = 0
     candidates = [
+        active_data / "user",
+        active_data,
         ROOT_DIR / "data" / "user",
+        ROOT_DIR / "data" / "users",
+        ROOT_DIR / "data",
         Path.cwd() / "data" / "user",
         Path.cwd() / "data" / "users",
-        ROOT_DIR / "data",
         Path.cwd() / "data",
     ]
+
+    key_file, key_file_alt = get_vault_key_files()
 
     # First, look for any backed up master key file
     for c_dir in candidates:
@@ -106,24 +200,25 @@ def sync_user_backup_files() -> int:
             continue
         for key_name in [".vault_master.key", "vault_master.key", "master.key", ".master.key"]:
             candidate_key = c_dir / key_name
-            if candidate_key.exists() and candidate_key.is_file() and candidate_key != VAULT_KEY_FILE and candidate_key != VAULT_KEY_FILE_ALT:
+            if candidate_key.exists() and candidate_key.is_file() and candidate_key != key_file and candidate_key != key_file_alt:
                 try:
                     k_data = candidate_key.read_bytes()
-                    if len(k_data) >= 32 and (not VAULT_KEY_FILE.exists() or len(VAULT_KEY_FILE.read_bytes()) < 32):
-                        VAULT_KEY_FILE.write_bytes(k_data[:32])
-                        VAULT_KEY_FILE_ALT.write_bytes(k_data[:32])
+                    parsed = _parse_raw_or_hex_key(k_data)
+                    if parsed and (not key_file.exists() or key_file.stat().st_size != 32):
+                        key_file.write_bytes(parsed)
+                        key_file_alt.write_bytes(parsed)
                         print(f"🔑 [VAULT RECOVERY] Đã phục hồi master key từ {candidate_key}")
                 except Exception:
                     pass
 
     # Second, sync user json files
     for c_dir in candidates:
-        if not c_dir.exists() or c_dir.resolve() == USER_DATA_DIR.resolve():
+        if not c_dir.exists() or c_dir.resolve() == active_users.resolve():
             continue
         try:
             for item in c_dir.glob("*.json"):
                 if item.is_file() and item.stem.isdigit():
-                    dest = USER_DATA_DIR / item.name
+                    dest = active_users / item.name
                     if not dest.exists():
                         try:
                             shutil.copy2(item, dest)
@@ -151,21 +246,23 @@ def get_vault_master_key() -> bytes:
                 pass
         return hashlib.sha256(cleaned.encode("utf-8")).digest()
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    for kf in [VAULT_KEY_FILE, VAULT_KEY_FILE_ALT, Path.cwd() / "data" / ".vault_master.key", Path.cwd() / "data" / "vault_master.key"]:
+    d = get_data_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    kf_primary, kf_alt = get_vault_key_files()
+    for kf in [kf_primary, kf_alt, ROOT_DIR / "data" / ".vault_master.key", ROOT_DIR / "data" / "vault_master.key", Path.cwd() / "data" / ".vault_master.key", Path.cwd() / "data" / "vault_master.key"]:
         if kf.exists() and kf.is_file():
             try:
                 parsed = _parse_raw_or_hex_key(kf.read_bytes())
                 if parsed:
                     # Keep both synced in binary format
-                    if not VAULT_KEY_FILE.exists() or VAULT_KEY_FILE.stat().st_size != 32:
+                    if not kf_primary.exists() or kf_primary.stat().st_size != 32:
                         try:
-                            VAULT_KEY_FILE.write_bytes(parsed)
+                            kf_primary.write_bytes(parsed)
                         except Exception:
                             pass
-                    if not VAULT_KEY_FILE_ALT.exists() or VAULT_KEY_FILE_ALT.stat().st_size != 32:
+                    if not kf_alt.exists() or kf_alt.stat().st_size != 32:
                         try:
-                            VAULT_KEY_FILE_ALT.write_bytes(parsed)
+                            kf_alt.write_bytes(parsed)
                         except Exception:
                             pass
                     return parsed
@@ -175,11 +272,11 @@ def get_vault_master_key() -> bytes:
     # Generate new random 256-bit vault key and save both hidden and visible
     new_key = os.urandom(32)
     try:
-        VAULT_KEY_FILE.write_bytes(new_key)
-        VAULT_KEY_FILE_ALT.write_bytes(new_key)
+        kf_primary.write_bytes(new_key)
+        kf_alt.write_bytes(new_key)
         try:
-            os.chmod(VAULT_KEY_FILE, 0o600)
-            os.chmod(VAULT_KEY_FILE_ALT, 0o600)
+            os.chmod(kf_primary, 0o600)
+            os.chmod(kf_alt, 0o600)
         except Exception:
             pass
     except Exception:
