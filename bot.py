@@ -654,15 +654,19 @@ class QuestControlView(ui.View):
     async def btn_video(self, interaction: discord.Interaction, button: ui.Button):
         await handle_quest_video(interaction)
 
+    @ui.button(label="🎮 Chạy Game Process", style=discord.ButtonStyle.primary, row=1, custom_id="quest_btn_desktop")
+    async def btn_desktop(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_desktop(interaction)
+
     @ui.button(label="🎁 Claim Tất Cả Quà", style=discord.ButtonStyle.secondary, row=1, custom_id="quest_btn_claim_all")
     async def btn_claim_all(self, interaction: discord.Interaction, button: ui.Button):
         await handle_quest_claim(interaction)
 
-    @ui.button(label="🚀 Chạy Auto Trọn Gói", style=discord.ButtonStyle.primary, row=1, custom_id="quest_btn_full_auto")
+    @ui.button(label="🚀 Chạy Auto Trọn Gói", style=discord.ButtonStyle.success, row=2, custom_id="quest_btn_full_auto")
     async def btn_full_auto(self, interaction: discord.Interaction, button: ui.Button):
         await handle_quest_full_auto(interaction)
 
-    @ui.button(label="🔙 Bảng Điều Khiển Chính", style=discord.ButtonStyle.secondary, row=1, custom_id="quest_btn_back")
+    @ui.button(label="🔙 Bảng Điều Khiển Chính", style=discord.ButtonStyle.secondary, row=2, custom_id="quest_btn_back")
     async def btn_back(self, interaction: discord.Interaction, button: ui.Button):
         try:
             with bot.stream_lock:
@@ -1275,7 +1279,7 @@ def build_user_quests_embed(user_id: int, quests: list[quest_manager.QuestItem])
     embed.description = (
         f"Người dùng: <@{user_id}>\n"
         f"Tổng cộng: **{len(quests)}** nhiệm vụ | Đang làm: **{enrolled_count}** | Hoàn thành: **{completed_count}** | Đã nhận quà: **{claimed_count}**\n\n"
-        "⚡ *Bấm các nút bên dưới để tự động nhận tất cả, xem video hoặc nhận phần thưởng.*"
+        "⚡ *Bấm các nút bên dưới để tự động nhận tất cả, xem video, chạy tiến trình game PC hoặc nhận phần thưởng.*"
     )
 
     for q in quests[:12]:
@@ -1284,13 +1288,14 @@ def build_user_quests_embed(user_id: int, quests: list[quest_manager.QuestItem])
             t_name_vn = {
                 "WATCH_VIDEO": "🎬 Xem Video",
                 "WATCH_VIDEO_ON_MOBILE": "📱 Xem Video (Mobile)",
-                "PLAY_ON_DESKTOP": "🎮 Chơi Game PC",
+                "PLAY_ON_DESKTOP": "🎮 Chơi Game PC (Desktop Process)",
                 "STREAM_ON_DESKTOP": "🔴 Stream Màn Hình",
                 "PLAY_ACTIVITY": "🎲 Chơi Activity",
             }.get(t.task_name, t.task_name)
+            bar = quest_manager.make_progress_bar(t.progress, t.target, length=10)
             prog_m = t.progress / 60
             target_m = t.target / 60
-            task_lines.append(f"• {t_name_vn}: `{t.progress:.0f}s/{t.target}s` (`{prog_m:.1f}m/{target_m:.1f}m`)")
+            task_lines.append(f"• **{t_name_vn}**:\n  {bar} `{t.progress:.0f}s / {t.target:.0f}s` (`{prog_m:.1f}m / {target_m:.1f}m`)")
 
         tasks_str = "\n".join(task_lines) if task_lines else "• Không có thông tin task"
         val = (
@@ -1311,6 +1316,74 @@ def build_user_quests_embed(user_id: int, quests: list[quest_manager.QuestItem])
 
     embed.set_footer(text="Discord Badge Maximizer · Auto Quest Completer")
     return embed
+
+
+class LiveProgressController:
+    """Handles real-time Discord interaction editing and console printing for live quest progress."""
+    def __init__(self, interaction: discord.Interaction, title: str):
+        self.interaction = interaction
+        self.title = title
+        self.loop = asyncio.get_running_loop()
+        self.last_update = 0.0
+        self.logs: list[str] = []
+
+    def on_progress(self, data: dict[str, Any]) -> None:
+        asyncio.run_coroutine_threadsafe(self._async_update(data), self.loop)
+
+    async def _async_update(self, data: dict[str, Any]) -> None:
+        now = time.time()
+        is_terminal = data.get("status") in ("COMPLETED", "ERROR")
+        if not is_terminal and (now - self.last_update) < 1.5:
+            return
+        self.last_update = now
+
+        log_line = data.get("log")
+        if log_line and (not self.logs or self.logs[-1] != log_line):
+            self.logs.append(log_line)
+            if len(self.logs) > 6:
+                self.logs.pop(0)
+
+        embed = discord.Embed(
+            title=f"⚡ {self.title}",
+            color=discord.Color.green() if is_terminal and data.get("status") == "COMPLETED" else discord.Color.blue(),
+        )
+        if data.get("quest_name"):
+            embed.add_field(name="🎯 Nhiệm Vụ", value=f"**{data.get('quest_name')}**", inline=False)
+
+        current = data.get("current", 0)
+        target = data.get("target", 0)
+        percent = data.get("percent", 0)
+        bar = data.get("bar") or quest_manager.make_progress_bar(current, target)
+
+        embed.add_field(
+            name="📊 Tiến Trình Process",
+            value=f"{bar}\n⏱️ `{current}s / {target}s` (`{percent}%`)",
+            inline=True
+        )
+
+        status_str = "🟢 Đang chạy (Active)"
+        if data.get("status") == "COMPLETED":
+            status_str = "✅ Hoàn thành"
+        elif data.get("status") == "ERROR":
+            status_str = "❌ Gặp sự cố"
+        embed.add_field(name="⚡ Trạng Thái", value=status_str, inline=True)
+
+        if data.get("pid"):
+            exe = data.get("exe_name", "GameProcess.exe")
+            embed.add_field(name="🎮 Game Process (Giả lập)", value=f"`{exe}` (PID: `{data.get('pid')}`)", inline=False)
+
+        if self.logs:
+            embed.add_field(name="📝 Nhật Ký Hoạt Động", value="\n".join(f"• {l}" for l in self.logs), inline=False)
+
+        embed.set_footer(text="Discord Badge Maximizer · Real-time Quest Process Tracker")
+
+        try:
+            if not self.interaction.response.is_done():
+                await self.interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                await self.interaction.edit_original_response(embed=embed)
+        except Exception:
+            pass
 
 
 async def handle_quest_panel(interaction: discord.Interaction) -> None:
@@ -1402,9 +1475,15 @@ async def handle_quest_video(interaction: discord.Interaction) -> None:
             )
             return await interaction.followup.send(embed=embed, ephemeral=True)
 
+        controller = LiveProgressController(interaction, title="Tiến Trình Chạy Video Quest")
         results = []
         for q in video_quests:
-            v_ok, v_msg = await asyncio.to_thread(quest_manager.complete_video_quest, state.token, q)
+            v_ok, v_msg = await asyncio.to_thread(
+                quest_manager.complete_video_quest,
+                state.token,
+                q,
+                on_progress=controller.on_progress,
+            )
             results.append(v_msg)
 
         embed = discord.Embed(
@@ -1413,9 +1492,62 @@ async def handle_quest_video(interaction: discord.Interaction) -> None:
             color=discord.Color.green(),
         )
         view = QuestControlView()
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        await interaction.edit_original_response(embed=embed, view=view)
     except Exception as exc:
         print(f"[handle_quest_video Error] {exc}")
+
+
+async def handle_quest_desktop(interaction: discord.Interaction, quest_id: Optional[str] = None) -> None:
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        user_id = interaction.user.id
+        state = get_user_state(user_id)
+        if not state.has_token:
+            return await interaction.followup.send("⚠️ Bạn chưa cài đặt Token!", ephemeral=True)
+
+        ok, quests, msg = await asyncio.to_thread(quest_manager.fetch_all_quests, state.token)
+        if not ok:
+            return await interaction.followup.send(f"❌ {msg}", ephemeral=True)
+
+        desktop_quests = [
+            q for q in quests
+            if any(t.task_name in ("PLAY_ON_DESKTOP", "PLAY_ACTIVITY") for t in q.tasks) and not q.is_completed
+        ]
+        if quest_id:
+            desktop_quests = [q for q in desktop_quests if q.id == quest_id.strip()]
+
+        if not desktop_quests:
+            embed = discord.Embed(
+                title="🎮 Game Process Quests (PC)",
+                description="ℹ️ Không có nhiệm vụ dạng Chơi Game PC nào đang chờ hoàn thành!",
+                color=discord.Color.blue(),
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        controller = LiveProgressController(interaction, title="Tiến Trình Giả Lập Game Process (PC)")
+        results = []
+        for q in desktop_quests:
+            d_ok, d_msg = await asyncio.to_thread(
+                quest_manager.simulate_desktop_game_quest,
+                state.token,
+                q,
+                channel_id=state.last_channel_id,
+                on_progress=controller.on_progress,
+                step_seconds=15,
+            )
+            results.append(d_msg)
+
+        embed = discord.Embed(
+            title=f"🎮 Hoàn Thành Tiến Trình Game Quests ({len(results)})",
+            description="\n".join(results),
+            color=discord.Color.green(),
+        )
+        view = QuestControlView()
+        await interaction.edit_original_response(embed=embed, view=view)
+    except Exception as exc:
+        print(f"[handle_quest_desktop Error] {exc}")
 
 
 async def handle_quest_claim(interaction: discord.Interaction) -> None:
@@ -1450,7 +1582,13 @@ async def handle_quest_full_auto(interaction: discord.Interaction) -> None:
         if not state.has_token:
             return await interaction.followup.send("⚠️ Bạn chưa cài đặt Token!", ephemeral=True)
 
-        summary = await asyncio.to_thread(quest_manager.auto_run_quest_flow, state.token)
+        controller = LiveProgressController(interaction, title="Tiến Trình Chạy Auto Quests Trọn Gói")
+        summary = await asyncio.to_thread(
+            quest_manager.auto_run_quest_flow,
+            state.token,
+            channel_id=state.last_channel_id,
+            on_progress=controller.on_progress,
+        )
         embed = discord.Embed(
             title="🚀 Kết Quả Chạy Auto Quests Trọn Gói",
             color=discord.Color.green(),
@@ -1458,13 +1596,14 @@ async def handle_quest_full_auto(interaction: discord.Interaction) -> None:
         embed.add_field(name="Tổng nhiệm vụ tìm thấy", value=f"`{summary['total_quests']}`", inline=True)
         embed.add_field(name="Đã nhận mới", value=f"`{summary['enrolled_new']}`", inline=True)
         embed.add_field(name="Video hoàn thành", value=f"`{summary['video_completed']}`", inline=True)
+        embed.add_field(name="Game giả lập hoàn thành", value=f"`{summary.get('desktop_simulated', 0)}`", inline=True)
         embed.add_field(name="Phần thưởng đã claim", value=f"`{summary['claimed']}`", inline=True)
 
         if summary["logs"]:
             embed.add_field(name="Chi tiết thực hiện", value="\n".join(summary["logs"][:15]), inline=False)
 
         view = QuestControlView()
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        await interaction.edit_original_response(embed=embed, view=view)
     except Exception as exc:
         print(f"[handle_quest_full_auto Error] {exc}")
 
@@ -2041,6 +2180,12 @@ async def quest_enroll_cmd(interaction: discord.Interaction, quest_id: Optional[
 @quest_group.command(name="video", description="Tự động xem video hoàn thành nhiệm vụ Video Quests")
 async def quest_video_cmd(interaction: discord.Interaction):
     await handle_quest_video(interaction)
+
+
+@quest_group.command(name="play", description="Giả lập tiến trình chơi Game PC (Desktop Process) để hoàn thành Quest")
+@app_commands.describe(quest_id="(Tùy chọn) ID của Quest muốn chơi (Bỏ trống để tự động làm quest đầu tiên)")
+async def quest_play_cmd(interaction: discord.Interaction, quest_id: Optional[str] = None):
+    await handle_quest_desktop(interaction, quest_id=quest_id)
 
 
 @quest_group.command(name="claim", description="Nhận phần thưởng cho các nhiệm vụ đã hoàn thành")

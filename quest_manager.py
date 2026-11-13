@@ -43,6 +43,17 @@ class QuestTask:
         return self.progress >= self.target if self.target > 0 else False
 
 
+def make_progress_bar(current: float, target: float, length: int = 10) -> str:
+    """Creates a visual text progress bar, e.g. [████████░░░░] 67%"""
+    if target <= 0:
+        return f"`[{'░' * length}] 0%`"
+    ratio = min(1.0, max(0.0, current / target))
+    filled = int(round(length * ratio))
+    bar = "█" * filled + "░" * (length - filled)
+    percent = int(ratio * 100)
+    return f"`[{bar}] {percent}%`"
+
+
 @dataclass
 class QuestItem:
     id: str
@@ -56,6 +67,13 @@ class QuestItem:
     claimed_at: Optional[str] = None
     reward_name: str = ""
     raw_data: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def progress_bar(self) -> str:
+        if not self.tasks:
+            return "`[░░░░░░░░░░] 0%`"
+        t0 = self.tasks[0]
+        return make_progress_bar(t0.progress, t0.target)
 
     @property
     def is_enrolled(self) -> bool:
@@ -322,6 +340,7 @@ def complete_video_quest(
     quest: QuestItem,
     super_props: str = "",
     speed_step: int = 5,
+    on_progress: Optional[Any] = None,
 ) -> tuple[bool, str]:
     """
     Simulates video viewing progress for WATCH_VIDEO / WATCH_VIDEO_ON_MOBILE tasks.
@@ -343,23 +362,232 @@ def complete_video_quest(
         enroll_quest(token, quest.id, super_props)
         time.sleep(1.0)
 
+    print(f"🎬 [Quest Video Process] Bắt đầu xem video: {quest.name} ({current}s/{target}s)")
+    if on_progress:
+        try:
+            on_progress({
+                "quest_id": quest.id,
+                "quest_name": quest.name,
+                "game_title": quest.game_title,
+                "task_type": "WATCH_VIDEO",
+                "current": current,
+                "target": target,
+                "percent": int((current / target) * 100) if target > 0 else 0,
+                "bar": make_progress_bar(current, target),
+                "status": "RUNNING",
+                "log": f"Bắt đầu phát video: `{quest.name}`",
+            })
+        except Exception:
+            pass
+
     while current < target:
         current = min(target, current + speed_step)
         timestamp_val = current + round(random.uniform(0.1, 0.9), 2)
         payload = {"timestamp": min(float(target), timestamp_val)}
         status, data = _quest_api_call(url, token, method="POST", body=payload, super_props=super_props)
         if status not in (200, 201):
-            return False, f"Lỗi gửi tiến độ video (HTTP {status})"
+            err_msg = f"Lỗi gửi tiến độ video (HTTP {status})"
+            print(f"❌ [Quest Video Process] {err_msg}")
+            if on_progress:
+                try:
+                    on_progress({
+                        "quest_id": quest.id,
+                        "quest_name": quest.name,
+                        "game_title": quest.game_title,
+                        "task_type": "WATCH_VIDEO",
+                        "current": current,
+                        "target": target,
+                        "percent": int((current / target) * 100),
+                        "bar": make_progress_bar(current, target),
+                        "status": "ERROR",
+                        "log": f"⚠️ {err_msg}",
+                    })
+                except Exception:
+                    pass
+            return False, err_msg
+
+        percent = int(min(100.0, (current / target) * 100))
+        bar = make_progress_bar(current, target)
+        print(f"🎬 [Quest Video Process] {quest.name}: {current}/{target}s ({percent}%) {bar}")
+        if on_progress:
+            try:
+                on_progress({
+                    "quest_id": quest.id,
+                    "quest_name": quest.name,
+                    "game_title": quest.game_title,
+                    "task_type": "WATCH_VIDEO",
+                    "current": current,
+                    "target": target,
+                    "percent": percent,
+                    "bar": bar,
+                    "status": "RUNNING",
+                    "log": f"Đang xem video: `{current}s/{target}s` ({percent}%)",
+                })
+            except Exception:
+                pass
 
         if isinstance(data, dict) and (data.get("completed_at") or data.get("completedAt")):
+            print(f"✅ [Quest Video Process] Đã hoàn thành: {quest.name}")
+            if on_progress:
+                try:
+                    on_progress({
+                        "quest_id": quest.id,
+                        "quest_name": quest.name,
+                        "game_title": quest.game_title,
+                        "task_type": "WATCH_VIDEO",
+                        "current": target,
+                        "target": target,
+                        "percent": 100,
+                        "bar": make_progress_bar(target, target),
+                        "status": "COMPLETED",
+                        "log": f"✅ Hoàn thành xem video: `{quest.name}`!",
+                    })
+                except Exception:
+                    pass
             return True, f"✅ Đã hoàn thành xem video: **{quest.name}**"
 
-        time.sleep(random.uniform(1.0, 2.0))
+        time.sleep(random.uniform(1.2, 2.0))
 
     # Send final completion ping
     payload = {"timestamp": float(target)}
     _quest_api_call(url, token, method="POST", body=payload, super_props=super_props)
+    print(f"✅ [Quest Video Process] Hoàn tất: {quest.name} ({target}s)")
+    if on_progress:
+        try:
+            on_progress({
+                "quest_id": quest.id,
+                "quest_name": quest.name,
+                "game_title": quest.game_title,
+                "task_type": "WATCH_VIDEO",
+                "current": target,
+                "target": target,
+                "percent": 100,
+                "bar": make_progress_bar(target, target),
+                "status": "COMPLETED",
+                "log": f"✅ Hoàn tất video: `{quest.name}` ({target}s)!",
+            })
+        except Exception:
+            pass
     return True, f"✅ Đã hoàn thành xem video: **{quest.name}** ({target}s)"
+
+
+def simulate_desktop_game_quest(
+    token: str,
+    quest: QuestItem,
+    super_props: str = "",
+    channel_id: str = "",
+    on_progress: Optional[Any] = None,
+    step_seconds: int = 15,
+) -> tuple[bool, str]:
+    """
+    Simulates playing a verified desktop game process for PLAY_ON_DESKTOP / PLAY_ACTIVITY quests.
+    Generates a spoofed OS Process PID, simulates game activity, and sends periodic heartbeat pings.
+    """
+    task = next(
+        (t for t in quest.tasks if t.task_name in ("PLAY_ON_DESKTOP", "PLAY_ACTIVITY")),
+        None,
+    )
+    if not task:
+        return False, "Nhiệm vụ này không yêu cầu chơi game trên máy tính (Desktop/Activity)."
+
+    target = task.target or 900
+    current = int(task.progress or 0)
+    fake_pid = random.randint(12000, 58000)
+    clean_title = quest.game_title.replace(" ", "")
+    exe_name = f"{clean_title}.exe"
+    if task.applications and isinstance(task.applications, list) and isinstance(task.applications[0], dict):
+        app_obj = task.applications[0]
+        exe_name = app_obj.get("name", clean_title).replace(" ", "") + ".exe"
+
+    print(f"🎮 [Quest Desktop Process] Khởi tạo giả lập tiến trình `{exe_name}` (PID: {fake_pid}) cho `{quest.name}`")
+    if on_progress:
+        try:
+            on_progress({
+                "quest_id": quest.id,
+                "quest_name": quest.name,
+                "game_title": quest.game_title,
+                "task_type": task.task_name,
+                "current": current,
+                "target": target,
+                "percent": int((current / target) * 100) if target > 0 else 0,
+                "bar": make_progress_bar(current, target),
+                "pid": fake_pid,
+                "exe_name": exe_name,
+                "status": "RUNNING",
+                "log": f"Khởi động tiến trình `{exe_name}` (PID: `{fake_pid}`)...",
+            })
+        except Exception:
+            pass
+
+    # Enroll first if needed
+    if not quest.is_enrolled:
+        enroll_quest(token, quest.id, super_props)
+        time.sleep(1.0)
+
+    url = f"{DISCORD_API_BASE}/quests/{quest.id}/heartbeat"
+    stream_key = f"call:{channel_id}:1" if channel_id else ""
+
+    while current < target:
+        current = min(target, current + step_seconds)
+        payload = {"stream_key": stream_key, "terminal": (current >= target)}
+        status, data = _quest_api_call(url, token, method="POST", body=payload, super_props=super_props)
+        if isinstance(data, dict):
+            prog_dict = data.get("progress") or {}
+            task_prog = prog_dict.get(task.task_name)
+            if isinstance(task_prog, dict):
+                current = max(current, int(task_prog.get("value", current)))
+
+        percent = int(min(100.0, (current / target) * 100))
+        bar = make_progress_bar(current, target)
+        print(f"🎮 [Quest Desktop Process] {exe_name} (PID: {fake_pid}): {current}/{target}s ({percent}%) {bar}")
+
+        if on_progress:
+            try:
+                on_progress({
+                    "quest_id": quest.id,
+                    "quest_name": quest.name,
+                    "game_title": quest.game_title,
+                    "task_type": task.task_name,
+                    "current": current,
+                    "target": target,
+                    "percent": percent,
+                    "bar": bar,
+                    "pid": fake_pid,
+                    "exe_name": exe_name,
+                    "status": "RUNNING",
+                    "log": f"Tiến trình `{exe_name}` (PID: `{fake_pid}`) đang chạy: `{current}s/{target}s` ({percent}%)",
+                })
+            except Exception:
+                pass
+
+        if current >= target:
+            break
+
+        time.sleep(min(10.0, float(step_seconds)))
+
+    # Terminal final ping
+    _quest_api_call(url, token, method="POST", body={"stream_key": stream_key, "terminal": True}, super_props=super_props)
+    print(f"✅ [Quest Desktop Process] Tiến trình `{exe_name}` (PID: {fake_pid}) hoàn thành nhiệm vụ `{quest.name}`!")
+    if on_progress:
+        try:
+            on_progress({
+                "quest_id": quest.id,
+                "quest_name": quest.name,
+                "game_title": quest.game_title,
+                "task_type": task.task_name,
+                "current": target,
+                "target": target,
+                "percent": 100,
+                "bar": make_progress_bar(target, target),
+                "pid": fake_pid,
+                "exe_name": exe_name,
+                "status": "COMPLETED",
+                "log": f"✅ Tiến trình `{exe_name}` hoàn thành {target}s!",
+            })
+        except Exception:
+            pass
+
+    return True, f"✅ Đã chạy giả lập tiến trình game `{exe_name}` (PID: `{fake_pid}`) hoàn tất **{quest.name}**!"
 
 
 def complete_activity_quest(
@@ -461,23 +689,40 @@ def auto_run_quest_flow(
     token: str,
     channel_id: str = "",
     super_props: str = "",
+    on_progress: Optional[Any] = None,
 ) -> dict[str, Any]:
     """
     Full automated Quest suite:
     1. Fetch all quests.
     2. Auto enroll all available quests.
-    3. Auto complete video quests.
-    4. Auto claim any ready rewards.
-    5. Return full diagnostic summary.
+    3. Auto complete video quests (with live progress).
+    4. Auto simulate desktop game process if applicable.
+    5. Auto claim any ready rewards.
+    6. Return full diagnostic summary.
     """
     summary = {
         "total_quests": 0,
         "enrolled_new": 0,
         "video_completed": 0,
+        "desktop_simulated": 0,
         "claimed": 0,
         "logs": [],
         "quests": [],
     }
+
+    if on_progress:
+        try:
+            on_progress({
+                "quest_name": "Đang khởi tạo...",
+                "status": "RUNNING",
+                "percent": 5,
+                "current": 1,
+                "target": 100,
+                "bar": make_progress_bar(5, 100),
+                "log": "🔍 [Giai đoạn 1/4] Đang quét danh sách Quest từ Discord...",
+            })
+        except Exception:
+            pass
 
     ok, quests, msg = fetch_all_quests(token, super_props)
     if not ok:
@@ -489,7 +734,21 @@ def auto_run_quest_flow(
 
     # 1. Auto Enroll
     unaccepted = [q for q in quests if not q.is_enrolled]
-    for q in unaccepted:
+    for idx, q in enumerate(unaccepted, 1):
+        if on_progress:
+            try:
+                on_progress({
+                    "quest_name": q.name,
+                    "status": "RUNNING",
+                    "percent": int((idx / max(1, len(unaccepted))) * 25),
+                    "current": idx,
+                    "target": len(unaccepted),
+                    "bar": make_progress_bar(idx, len(unaccepted)),
+                    "log": f"⚡ [Giai đoạn 2/4] Đang nhận quest: `{q.name}` ({idx}/{len(unaccepted)})",
+                })
+            except Exception:
+                pass
+
         enrolled_ok, emsg = enroll_quest(token, q.id, super_props)
         if enrolled_ok:
             summary["enrolled_new"] += 1
@@ -500,21 +759,59 @@ def auto_run_quest_flow(
         time.sleep(random.uniform(0.5, 1.0))
 
     # 2. Auto Complete Video Tasks
-    for q in quests:
-        has_video = any(t.task_name in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE") for t in q.tasks)
-        if has_video and not q.is_completed:
-            v_ok, v_msg = complete_video_quest(token, q, super_props)
-            if v_ok:
-                summary["video_completed"] += 1
-                summary["logs"].append(f"🎬 {v_msg}")
-                q.completed_at = datetime.utcnow().isoformat()
-            else:
-                summary["logs"].append(f"⚠️ Video {q.name}: {v_msg}")
-            time.sleep(1.0)
+    video_list = [
+        q for q in quests
+        if any(t.task_name in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE") for t in q.tasks) and not q.is_completed
+    ]
+    for q in video_list:
+        v_ok, v_msg = complete_video_quest(token, q, super_props, on_progress=on_progress)
+        if v_ok:
+            summary["video_completed"] += 1
+            summary["logs"].append(f"🎬 {v_msg}")
+            q.completed_at = datetime.utcnow().isoformat()
+        else:
+            summary["logs"].append(f"⚠️ Video {q.name}: {v_msg}")
+        time.sleep(1.0)
 
-    # 3. Auto Claim Ready Quests
+    # 3. Auto Simulate Desktop Game Process for PLAY_ON_DESKTOP / PLAY_ACTIVITY
+    desktop_list = [
+        q for q in quests
+        if any(t.task_name in ("PLAY_ON_DESKTOP", "PLAY_ACTIVITY") for t in q.tasks) and not q.is_completed
+    ]
+    for q in desktop_list:
+        d_ok, d_msg = simulate_desktop_game_quest(
+            token=token,
+            quest=q,
+            super_props=super_props,
+            channel_id=channel_id,
+            on_progress=on_progress,
+            step_seconds=30,
+        )
+        if d_ok:
+            summary["desktop_simulated"] += 1
+            summary["logs"].append(f"🎮 {d_msg}")
+            q.completed_at = datetime.utcnow().isoformat()
+        else:
+            summary["logs"].append(f"⚠️ Desktop {q.name}: {d_msg}")
+        time.sleep(1.0)
+
+    # 4. Auto Claim Ready Quests
     ready_to_claim = [q for q in quests if q.is_completed and not q.is_claimed]
     for q in ready_to_claim:
+        if on_progress:
+            try:
+                on_progress({
+                    "quest_name": q.name,
+                    "status": "RUNNING",
+                    "percent": 90,
+                    "current": 90,
+                    "target": 100,
+                    "bar": make_progress_bar(90, 100),
+                    "log": f"🎁 [Giai đoạn 4/4] Đang nhận thưởng: `{q.name}`",
+                })
+            except Exception:
+                pass
+
         c_ok, c_msg = claim_quest_reward(token, q.id, super_props=super_props)
         if c_ok:
             summary["claimed"] += 1
@@ -523,5 +820,19 @@ def auto_run_quest_flow(
         else:
             summary["logs"].append(f"⚠️ Claim {q.name}: {c_msg}")
         time.sleep(random.uniform(0.5, 1.0))
+
+    if on_progress:
+        try:
+            on_progress({
+                "quest_name": "Tất cả nhiệm vụ",
+                "status": "COMPLETED",
+                "percent": 100,
+                "current": 100,
+                "target": 100,
+                "bar": make_progress_bar(100, 100),
+                "log": "🎉 Hoàn tất toàn bộ quy trình Auto Quests!",
+            })
+        except Exception:
+            pass
 
     return summary
