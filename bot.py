@@ -54,6 +54,7 @@ from games import (
     load_game_catalog,
 )
 import crypto_vault
+import quest_manager
 
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).resolve().parent
@@ -604,7 +605,8 @@ class ControlPanelView(ui.View):
                     "• **📋 Xem Luồng Stream**: Giám sát mọi phiên stream đang chạy của tất cả user.\n"
                     "• **📊 Thống Kê Toàn Bộ**: Xem tổng user, tổng số giờ cày stream/game cả hệ thống.\n"
                     "• **🔄 Stream Lại Tất Cả**: Khởi động lại stream cho toàn bộ người dùng đã cài đặt token.\n"
-                    "• **🛑 Dừng Toàn Bộ (Emergency)**: Cắt toàn bộ luồng phát sóng ngay lập tức.\n\n"
+                    "• **🛑 Dừng Toàn Bộ (Emergency)**: Cắt toàn bộ luồng phát sóng ngay lập tức.\n"
+                    "• **🎯 Quản Lý Quests**: Kiểm tra & tự động accept/complete Quest cho toàn hệ thống.\n\n"
                     "💡 *Bạn cũng có thể gõ lệnh `/admin restart_all` hoặc `/admin stop <user>`.*"
                 ),
                 color=discord.Color.gold(),
@@ -613,6 +615,80 @@ class ControlPanelView(ui.View):
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         except discord.NotFound:
             pass
+
+    @ui.button(label="🎯 Quản Lý Quests", style=discord.ButtonStyle.primary, row=3, custom_id="panel_btn_quest_panel")
+    async def btn_quest_panel(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_panel(interaction)
+
+    @ui.button(label="⚡ Auto Nhận Tất Cả", style=discord.ButtonStyle.success, row=3, custom_id="panel_btn_quest_enroll_all")
+    async def btn_quest_enroll_all(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_enroll_all(interaction)
+
+    @ui.button(label="🎬 Làm Video Quests", style=discord.ButtonStyle.secondary, row=3, custom_id="panel_btn_quest_video")
+    async def btn_quest_video(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_video(interaction)
+
+    @ui.button(label="🎁 Claim Quà Quests", style=discord.ButtonStyle.secondary, row=3, custom_id="panel_btn_quest_claim")
+    async def btn_quest_claim(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_claim(interaction)
+
+
+class QuestControlView(ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: ui.Item[Any]) -> None:
+        if isinstance(error, discord.NotFound) and getattr(error, "code", None) == 10062:
+            return
+        print(f"[QuestControlView Error in {item}] {error}")
+
+    @ui.button(label="🔄 Quét & Làm Mới", style=discord.ButtonStyle.primary, row=0, custom_id="quest_btn_refresh")
+    async def btn_refresh(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_panel(interaction)
+
+    @ui.button(label="⚡ Auto Nhận Tất Cả", style=discord.ButtonStyle.success, row=0, custom_id="quest_btn_enroll_all")
+    async def btn_enroll_all(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_enroll_all(interaction)
+
+    @ui.button(label="🎬 Làm Video Quests", style=discord.ButtonStyle.secondary, row=0, custom_id="quest_btn_video")
+    async def btn_video(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_video(interaction)
+
+    @ui.button(label="🎁 Claim Tất Cả Quà", style=discord.ButtonStyle.secondary, row=1, custom_id="quest_btn_claim_all")
+    async def btn_claim_all(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_claim(interaction)
+
+    @ui.button(label="🚀 Chạy Auto Trọn Gói", style=discord.ButtonStyle.primary, row=1, custom_id="quest_btn_full_auto")
+    async def btn_full_auto(self, interaction: discord.Interaction, button: ui.Button):
+        await handle_quest_full_auto(interaction)
+
+    @ui.button(label="🔙 Bảng Điều Khiển Chính", style=discord.ButtonStyle.secondary, row=1, custom_id="quest_btn_back")
+    async def btn_back(self, interaction: discord.Interaction, button: ui.Button):
+        try:
+            with bot.stream_lock:
+                active_count = len([e for e in bot.active_engines.values() if e.running])
+            embed = discord.Embed(
+                title="🎛️ Bảng Điều Khiển Discord Badge Maximizer (Multi-User)",
+                description=(
+                    "Hệ thống hỗ trợ **nhiều người dùng cùng lúc** (Multi-User Isolation).\n"
+                    "Mỗi người bấm nút bên dưới sẽ tự quản lý tài khoản riêng biệt của mình qua Popup Form ẩn danh:\n\n"
+                    "• **⚙️ Cài đặt Tài khoản**: Mở popup điền token chính, cookie và alt token.\n"
+                    "• **🔴 Bắt đầu Stream**: Tự động tìm phòng voice khả dụng và phát sóng.\n"
+                    "• **⏹️ Dừng Stream**: Dừng luồng phát sóng của bạn và lưu lại số giờ.\n"
+                    "• **📊 Xem Trạng thái**: Kiểm tra thời gian stream tích lũy của bạn.\n"
+                    "• **🎮 Cày Giờ Game**: Mở popup chọn số game và số giờ để cày tự động.\n"
+                    "• **🎯 Nhiệm Vụ Quests**: Tự động quét, nhận và hoàn thành Discord Quests."
+                ),
+                color=discord.Color.blurple(),
+            )
+            embed.add_field(name="⚡ Máy chủ Bot", value=f"Đang phát sóng: **{active_count}** luồng đồng thời", inline=False)
+            view = ControlPanelView(bot_instance=bot)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(embed=embed, view=view)
+            else:
+                await interaction.message.edit(embed=embed, view=view)
+        except Exception as e:
+            print(f"[Quest Back Error] {e}")
 
 
 class AdminPanelView(ui.View):
@@ -715,6 +791,48 @@ class AdminPanelView(ui.View):
             await interaction.followup.send(embed=embed, ephemeral=True)
         except discord.NotFound:
             pass
+
+    @ui.button(label="🎯 Báo Cáo Quest Toàn Bot", style=discord.ButtonStyle.primary, row=2, custom_id="admin_btn_quest_panel")
+    async def btn_admin_quest_panel(self, interaction: discord.Interaction, button: ui.Button):
+        try:
+            if not is_admin(interaction.user.id):
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+                return await interaction.followup.send("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            embed = await asyncio.to_thread(build_admin_quests_summary_embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"[Admin Quest Panel Error] {e}")
+
+    @ui.button(label="⚡ Auto Accept Quests Cho Tất Cả", style=discord.ButtonStyle.success, row=2, custom_id="admin_btn_quest_enroll_all")
+    async def btn_admin_quest_enroll_all(self, interaction: discord.Interaction, button: ui.Button):
+        try:
+            if not is_admin(interaction.user.id):
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+                return await interaction.followup.send("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            embed = await asyncio.to_thread(admin_enroll_all_users_quests)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"[Admin Quest Enroll All Error] {e}")
+
+    @ui.button(label="🚀 Chạy Auto Quests Toàn Bộ Users", style=discord.ButtonStyle.danger, row=2, custom_id="admin_btn_quest_auto_all")
+    async def btn_admin_quest_auto_all(self, interaction: discord.Interaction, button: ui.Button):
+        try:
+            if not is_admin(interaction.user.id):
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+                return await interaction.followup.send("⛔ Chỉ Admin mới có quyền truy cập!", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            embed = await asyncio.to_thread(admin_auto_run_all_users_quests)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"[Admin Quest Auto All Error] {e}")
 
 
 # ==========================================
@@ -1135,6 +1253,223 @@ async def handle_view_profile(interaction: discord.Interaction):
 
 
 # ==========================================
+# 3.5. DISCORD QUESTS AUTOMATION & UI
+# ==========================================
+
+def build_user_quests_embed(user_id: int, quests: list[quest_manager.QuestItem]) -> discord.Embed:
+    embed = discord.Embed(
+        title="🎯 Bảng Nhiệm Vụ Discord Quests Của Bạn",
+        color=discord.Color.blurple(),
+    )
+    if not quests:
+        embed.description = (
+            f"Chào <@{user_id}>! Hiện tại không tìm thấy nhiệm vụ Discord Quests nào khả dụng trên tài khoản của bạn.\n\n"
+            "💡 *Mẹo: Discord thường phát hành Quests định kỳ theo từng tuần hoặc sự kiện game mới.*"
+        )
+        return embed
+
+    enrolled_count = len([q for q in quests if q.is_enrolled])
+    completed_count = len([q for q in quests if q.is_completed])
+    claimed_count = len([q for q in quests if q.is_claimed])
+
+    embed.description = (
+        f"Người dùng: <@{user_id}>\n"
+        f"Tổng cộng: **{len(quests)}** nhiệm vụ | Đang làm: **{enrolled_count}** | Hoàn thành: **{completed_count}** | Đã nhận quà: **{claimed_count}**\n\n"
+        "⚡ *Bấm các nút bên dưới để tự động nhận tất cả, xem video hoặc nhận phần thưởng.*"
+    )
+
+    for q in quests[:12]:
+        task_lines = []
+        for t in q.tasks:
+            t_name_vn = {
+                "WATCH_VIDEO": "🎬 Xem Video",
+                "WATCH_VIDEO_ON_MOBILE": "📱 Xem Video (Mobile)",
+                "PLAY_ON_DESKTOP": "🎮 Chơi Game PC",
+                "STREAM_ON_DESKTOP": "🔴 Stream Màn Hình",
+                "PLAY_ACTIVITY": "🎲 Chơi Activity",
+            }.get(t.task_name, t.task_name)
+            prog_m = t.progress / 60
+            target_m = t.target / 60
+            task_lines.append(f"• {t_name_vn}: `{t.progress:.0f}s/{t.target}s` (`{prog_m:.1f}m/{target_m:.1f}m`)")
+
+        tasks_str = "\n".join(task_lines) if task_lines else "• Không có thông tin task"
+        val = (
+            f"**Trạng thái:** {q.status_label}\n"
+            f"**Game:** `{q.game_title}`\n"
+            f"**Tiến độ:**\n{tasks_str}\n"
+            f"**Hạn:** `{q.expires_at[:10] if q.expires_at else 'N/A'}`"
+        )
+        if q.reward_name:
+            val += f" | **Quà:** `{q.reward_name}`"
+        val += f"\n**Quest ID:** `{q.id}`"
+
+        embed.add_field(
+            name=f"{q.status_emoji} {q.name}",
+            value=val,
+            inline=False,
+        )
+
+    embed.set_footer(text="Discord Badge Maximizer · Auto Quest Completer")
+    return embed
+
+
+async def handle_quest_panel(interaction: discord.Interaction) -> None:
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        user_id = interaction.user.id
+        state = get_user_state(user_id)
+        if not state.has_token:
+            embed = discord.Embed(
+                title="⚠️ Chưa cài đặt Token!",
+                description=(
+                    "Bạn chưa lưu Token Discord tài khoản cá nhân.\n"
+                    "Vui lòng bấm **⚙️ Cài đặt Tài khoản (Popup)** hoặc gõ `/setup` để điền Token trước khi quét Quests!"
+                ),
+                color=discord.Color.gold(),
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        ok, quests, msg = await asyncio.to_thread(quest_manager.fetch_all_quests, state.token)
+        if not ok:
+            embed = discord.Embed(
+                title="❌ Lỗi Quét Discord Quests",
+                description=f"Không thể kết nối đến Discord API Quests:\n`{msg}`",
+                color=discord.Color.red(),
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        embed = build_user_quests_embed(user_id, quests)
+        view = QuestControlView()
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    except Exception as exc:
+        print(f"[handle_quest_panel Error] {exc}")
+
+
+async def handle_quest_enroll_all(interaction: discord.Interaction) -> None:
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        user_id = interaction.user.id
+        state = get_user_state(user_id)
+        if not state.has_token:
+            embed = discord.Embed(
+                title="⚠️ Chưa cài đặt Token!",
+                description="Vui lòng bấm **⚙️ Cài đặt Tài khoản (Popup)** để lưu Token trước!",
+                color=discord.Color.gold(),
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        enrolled, total, logs = await asyncio.to_thread(quest_manager.auto_enroll_all_quests, state.token)
+        embed = discord.Embed(
+            title=f"⚡ Kết Quả Tự Động Nhận Quests ({enrolled}/{total})",
+            color=discord.Color.green() if enrolled > 0 else discord.Color.blurple(),
+        )
+        embed.description = "\n".join(logs[:15]) if logs else "Không có nhiệm vụ nào cần nhận."
+        embed.set_footer(text="Bấm '🎯 Quản Lý Quests' để kiểm tra lại toàn bộ danh sách.")
+        view = QuestControlView()
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    except Exception as exc:
+        print(f"[handle_quest_enroll_all Error] {exc}")
+
+
+async def handle_quest_video(interaction: discord.Interaction) -> None:
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        user_id = interaction.user.id
+        state = get_user_state(user_id)
+        if not state.has_token:
+            return await interaction.followup.send("⚠️ Bạn chưa cài đặt Token!", ephemeral=True)
+
+        ok, quests, msg = await asyncio.to_thread(quest_manager.fetch_all_quests, state.token)
+        if not ok:
+            return await interaction.followup.send(f"❌ {msg}", ephemeral=True)
+
+        video_quests = [
+            q for q in quests
+            if any(t.task_name in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE") for t in q.tasks) and not q.is_completed
+        ]
+
+        if not video_quests:
+            embed = discord.Embed(
+                title="🎬 Video Quests",
+                description="ℹ️ Không có nhiệm vụ dạng xem Video nào đang chờ hoàn thành!",
+                color=discord.Color.blue(),
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        results = []
+        for q in video_quests:
+            v_ok, v_msg = await asyncio.to_thread(quest_manager.complete_video_quest, state.token, q)
+            results.append(v_msg)
+
+        embed = discord.Embed(
+            title=f"🎬 Hoàn Thành Video Quests ({len(results)})",
+            description="\n".join(results),
+            color=discord.Color.green(),
+        )
+        view = QuestControlView()
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    except Exception as exc:
+        print(f"[handle_quest_video Error] {exc}")
+
+
+async def handle_quest_claim(interaction: discord.Interaction) -> None:
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        user_id = interaction.user.id
+        state = get_user_state(user_id)
+        if not state.has_token:
+            return await interaction.followup.send("⚠️ Bạn chưa cài đặt Token!", ephemeral=True)
+
+        claimed, logs = await asyncio.to_thread(quest_manager.claim_all_completed_quests, state.token)
+        embed = discord.Embed(
+            title=f"🎁 Nhận Quà Nhiệm Vụ ({claimed} đã nhận)",
+            description="\n".join(logs) if logs else "Không có nhiệm vụ nào đang chờ nhận quà.",
+            color=discord.Color.green() if claimed > 0 else discord.Color.blue(),
+        )
+        view = QuestControlView()
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    except Exception as exc:
+        print(f"[handle_quest_claim Error] {exc}")
+
+
+async def handle_quest_full_auto(interaction: discord.Interaction) -> None:
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        user_id = interaction.user.id
+        state = get_user_state(user_id)
+        if not state.has_token:
+            return await interaction.followup.send("⚠️ Bạn chưa cài đặt Token!", ephemeral=True)
+
+        summary = await asyncio.to_thread(quest_manager.auto_run_quest_flow, state.token)
+        embed = discord.Embed(
+            title="🚀 Kết Quả Chạy Auto Quests Trọn Gói",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Tổng nhiệm vụ tìm thấy", value=f"`{summary['total_quests']}`", inline=True)
+        embed.add_field(name="Đã nhận mới", value=f"`{summary['enrolled_new']}`", inline=True)
+        embed.add_field(name="Video hoàn thành", value=f"`{summary['video_completed']}`", inline=True)
+        embed.add_field(name="Phần thưởng đã claim", value=f"`{summary['claimed']}`", inline=True)
+
+        if summary["logs"]:
+            embed.add_field(name="Chi tiết thực hiện", value="\n".join(summary["logs"][:15]), inline=False)
+
+        view = QuestControlView()
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    except Exception as exc:
+        print(f"[handle_quest_full_auto Error] {exc}")
+
+
+# ==========================================
 # 4. BOT CLIENT & SLASH COMMANDS REGISTRATION
 # ==========================================
 
@@ -1152,6 +1487,7 @@ class StreamBot(commands.Bot):
     async def setup_hook(self) -> None:
         self.add_view(ControlPanelView(self))
         self.add_view(AdminPanelView())
+        self.add_view(QuestControlView())
         print("[Bot] Đang đồng bộ Slash Commands với Discord...")
         synced = await self.tree.sync()
         print(f"[Bot] Đã đồng bộ thành công {len(synced)} lệnh Slash.")
@@ -1472,6 +1808,131 @@ async def autonomous_stream_supervisor():
             pass
 
 
+def build_admin_quests_summary_embed() -> discord.Embed:
+    if not USER_DATA_DIR.exists():
+        return discord.Embed(title="📊 [Admin] Quests Thống Kê", description="Chưa có dữ liệu users.", color=discord.Color.red())
+
+    user_files = list(USER_DATA_DIR.glob("*.json"))
+    embed = discord.Embed(
+        title="🎯 [Admin] Báo Cáo Quests Toàn Bộ Hệ Thống",
+        color=discord.Color.gold(),
+    )
+    user_rows = []
+    total_quests_found = 0
+    total_enrolled_found = 0
+    total_completed_found = 0
+
+    for f in user_files:
+        uid_str = f.stem
+        if not uid_str.isdigit():
+            continue
+        uid = int(uid_str)
+        state = get_user_state(uid)
+        if not state.has_token:
+            continue
+        ok, quests, _ = quest_manager.fetch_all_quests(state.token)
+        if ok and quests:
+            total_quests_found += len(quests)
+            enrolled = len([q for q in quests if q.is_enrolled])
+            completed = len([q for q in quests if q.is_completed])
+            total_enrolled_found += enrolled
+            total_completed_found += completed
+            user_rows.append(f"• <@{uid}>: `{len(quests)}` quests (`{enrolled}` đã nhận, `{completed}` đã xong)")
+        elif ok and not quests:
+            user_rows.append(f"• <@{uid}>: 0 quests khả dụng")
+        else:
+            user_rows.append(f"• <@{uid}>: ⚠️ Lỗi đọc quest")
+
+    embed.add_field(name="👥 Tổng Users có Token", value=f"**{len(user_rows)}** users", inline=True)
+    embed.add_field(name="🎯 Tổng Quests khả dụng", value=f"**{total_quests_found}** quests", inline=True)
+    embed.add_field(name="✅ Đã nhận / Đã xong", value=f"**{total_enrolled_found}** đã nhận / **{total_completed_found}** xong", inline=True)
+
+    if user_rows:
+        embed.add_field(name="Chi tiết từng User", value="\n".join(user_rows[:20]), inline=False)
+    else:
+        embed.description = "Chưa có user nào có token hợp lệ để quét."
+
+    embed.set_footer(text=f"Admin: {PRIMARY_ADMIN_ID} · Dùng các nút bấm để Auto Nhận cho tất cả.")
+    return embed
+
+
+def admin_enroll_all_users_quests() -> discord.Embed:
+    if not USER_DATA_DIR.exists():
+        return discord.Embed(title="⚡ [Admin] Auto Nhận Quests", description="Chưa có user nào.", color=discord.Color.red())
+
+    user_files = list(USER_DATA_DIR.glob("*.json"))
+    logs = []
+    total_users_enrolled = 0
+    total_new_enrolled = 0
+
+    for f in user_files:
+        uid_str = f.stem
+        if not uid_str.isdigit():
+            continue
+        uid = int(uid_str)
+        state = get_user_state(uid)
+        if not state.has_token:
+            continue
+        enrolled, total, _ = quest_manager.auto_enroll_all_quests(state.token)
+        if enrolled > 0:
+            total_users_enrolled += 1
+            total_new_enrolled += enrolled
+            logs.append(f"• <@{uid}>: Đã nhận thành công **+{enrolled}** quests mới")
+        else:
+            logs.append(f"• <@{uid}>: Đã nhận từ trước hoặc không có quest mới")
+
+    embed = discord.Embed(
+        title="⚡ [Admin] Kết Quả Auto Nhận Quests Cho Toàn Bộ Users",
+        description=(
+            f"Đã duyệt qua **{len(user_files)}** users trong hệ thống.\n"
+            f"Tổng số quest vừa nhận mới: **+{total_new_enrolled}** nhiệm vụ cho **{total_users_enrolled}** users.\n\n"
+            + "\n".join(logs[:20])
+        ),
+        color=discord.Color.green() if total_new_enrolled > 0 else discord.Color.blurple(),
+    )
+    return embed
+
+
+def admin_auto_run_all_users_quests() -> discord.Embed:
+    if not USER_DATA_DIR.exists():
+        return discord.Embed(title="🚀 [Admin] Auto Quests Trọn Gói", description="Chưa có user nào.", color=discord.Color.red())
+
+    user_files = list(USER_DATA_DIR.glob("*.json"))
+    logs = []
+    total_enrolled = 0
+    total_video = 0
+    total_claimed = 0
+
+    for f in user_files:
+        uid_str = f.stem
+        if not uid_str.isdigit():
+            continue
+        uid = int(uid_str)
+        state = get_user_state(uid)
+        if not state.has_token:
+            continue
+        summary = quest_manager.auto_run_quest_flow(state.token)
+        total_enrolled += summary["enrolled_new"]
+        total_video += summary["video_completed"]
+        total_claimed += summary["claimed"]
+        logs.append(
+            f"• <@{uid}>: Nhận **+{summary['enrolled_new']}**, Video **+{summary['video_completed']}**, Claim **+{summary['claimed']}**"
+        )
+
+    embed = discord.Embed(
+        title="🚀 [Admin] Báo Cáo Chạy Auto Quests Trọn Gói Cho Toàn Bộ Users",
+        description=(
+            f"Tổng kết hệ thống:\n"
+            f"• 🎯 Quests mới đã nhận: **+{total_enrolled}**\n"
+            f"• 🎬 Video quests đã xong: **+{total_video}**\n"
+            f"• 🎁 Quà đã tự động claim: **+{total_claimed}**\n\n"
+            + "\n".join(logs[:20])
+        ),
+        color=discord.Color.green(),
+    )
+    return embed
+
+
 @bot.event
 async def on_ready():
     migrated = crypto_vault.migrate_all_user_states(USER_DATA_DIR)
@@ -1540,6 +2001,61 @@ async def panel_cmd(interaction: discord.Interaction):
 
     view = ControlPanelView(bot_instance=bot)
     await interaction.response.send_message(embed=embed, view=view)
+
+
+# --- QUEST COMMANDS GROUP ---
+
+quest_group = app_commands.Group(name="quest", description="Quản lý và tự động hoàn thành Discord Quests")
+
+
+@quest_group.command(name="panel", description="Mở Bảng Điều Khiển Discord Quests với đầy đủ nút bấm")
+async def quest_panel_cmd(interaction: discord.Interaction):
+    await handle_quest_panel(interaction)
+
+
+@quest_group.command(name="list", description="Xem danh sách tất cả các nhiệm vụ Discord Quests hiện có của bạn")
+async def quest_list_cmd(interaction: discord.Interaction):
+    await handle_quest_panel(interaction)
+
+
+@quest_group.command(name="auto", description="Tự động quét, nhận tất cả nhiệm vụ và làm video quests (1-Click)")
+async def quest_auto_cmd(interaction: discord.Interaction):
+    await handle_quest_full_auto(interaction)
+
+
+@quest_group.command(name="enroll", description="Tự động nhận một hoặc toàn bộ nhiệm vụ Discord Quests")
+@app_commands.describe(quest_id="(Tùy chọn) ID của Quest muốn nhận (Bỏ trống để tự động nhận tất cả)")
+async def quest_enroll_cmd(interaction: discord.Interaction, quest_id: Optional[str] = None):
+    state = get_user_state(interaction.user.id)
+    if not state.has_token:
+        return await interaction.response.send_message("⚠️ Bạn chưa cài đặt Token! Vui lòng dùng `/setup` trước.", ephemeral=True)
+    if not quest_id:
+        return await handle_quest_enroll_all(interaction)
+    await interaction.response.defer(ephemeral=True)
+    ok, msg = await asyncio.to_thread(quest_manager.enroll_quest, state.token, quest_id.strip())
+    color = discord.Color.green() if ok else discord.Color.red()
+    embed = discord.Embed(title=f"Kết quả nhận Quest `{quest_id}`", description=msg, color=color)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@quest_group.command(name="video", description="Tự động xem video hoàn thành nhiệm vụ Video Quests")
+async def quest_video_cmd(interaction: discord.Interaction):
+    await handle_quest_video(interaction)
+
+
+@quest_group.command(name="claim", description="Nhận phần thưởng cho các nhiệm vụ đã hoàn thành")
+@app_commands.describe(quest_id="(Tùy chọn) ID Quest cần claim (Bỏ trống để claim tất cả)")
+async def quest_claim_cmd(interaction: discord.Interaction, quest_id: Optional[str] = None):
+    state = get_user_state(interaction.user.id)
+    if not state.has_token:
+        return await interaction.response.send_message("⚠️ Bạn chưa cài đặt Token!", ephemeral=True)
+    if not quest_id:
+        return await handle_quest_claim(interaction)
+    await interaction.response.defer(ephemeral=True)
+    ok, msg = await asyncio.to_thread(quest_manager.claim_quest_reward, state.token, quest_id.strip())
+    color = discord.Color.green() if ok else discord.Color.red()
+    embed = discord.Embed(title=f"Kết quả Claim Quest `{quest_id}`", description=msg, color=color)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 # --- STREAM COMMANDS GROUP ---
@@ -1741,6 +2257,33 @@ async def admin_panel_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
+@admin_group.command(name="quests_summary", description="[Admin] Xem báo cáo thống kê Quests của toàn bộ user trong hệ thống")
+async def admin_quests_summary_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    embed = await asyncio.to_thread(build_admin_quests_summary_embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@admin_group.command(name="quests_enroll_all", description="[Admin] Tự động quét và nhận toàn bộ Quests cho TẤT CẢ users")
+async def admin_quests_enroll_all_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    embed = await asyncio.to_thread(admin_enroll_all_users_quests)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@admin_group.command(name="quests_auto_all", description="[Admin] Chạy auto flow Quests trọn gói (Nhận + Video + Claim) cho TẤT CẢ users")
+async def admin_quests_auto_all_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        return await interaction.response.send_message(f"⛔ Lệnh này chỉ dành cho Admin (`{PRIMARY_ADMIN_ID}`)!", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    embed = await asyncio.to_thread(admin_auto_run_all_users_quests)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 # --- GAME PLAYTIME COMMAND ---
 
 @tree.command(name="farm_games", description="Cày thời gian chơi game cho tài khoản (Mở Popup nếu không điền số)")
@@ -1938,6 +2481,18 @@ async def help_cmd(interaction: discord.Interaction):
         ),
         inline=False
     )
+    embed.add_field(
+        name="🎯 Tự Động Hoàn Thành Discord Quests",
+        value=(
+            "`/quest panel` - Mở Bảng Điều Khiển Discord Quests chuyên dụng\n"
+            "`/quest list` - Xem danh sách nhiệm vụ Discord Quests hiện có\n"
+            "`/quest auto` - Tự động quét, nhận tất cả quest và làm video quest (1-Click)\n"
+            "`/quest enroll [id]` - Nhận một quest cụ thể hoặc toàn bộ quest\n"
+            "`/quest video` - Tự động chạy xem video hoàn thành Video Quests\n"
+            "`/quest claim [id]` - Nhận phần thưởng cho nhiệm vụ đã hoàn thành"
+        ),
+        inline=False
+    )
     if is_admin(interaction.user.id):
         embed.add_field(
             name="👑 Lệnh Quản Trị Hệ Thống (Dành Riêng Cho Admin)",
@@ -1948,7 +2503,10 @@ async def help_cmd(interaction: discord.Interaction):
                 "`/admin stop <user>` - Dừng luồng stream của bất kỳ user nào\n"
                 "`/admin stop_all` - Dừng khẩn cấp toàn bộ các luồng trên bot\n"
                 "`/admin stats` - Xem báo cáo thống kê toàn bộ hệ thống bot\n"
-                "`/admin reset_user <user>` - Xóa sạch dữ liệu cấu hình của user"
+                "`/admin reset_user <user>` - Xóa sạch dữ liệu cấu hình của user\n"
+                "`/admin quests_summary` - Báo cáo thống kê Quests của toàn bộ user\n"
+                "`/admin quests_enroll_all` - Tự động nhận Quests cho TẤT CẢ users\n"
+                "`/admin quests_auto_all` - Chạy auto Quests trọn gói cho TẤT CẢ users"
             ),
             inline=False
         )
@@ -1977,6 +2535,7 @@ def run_bot() -> None:
             print("Đã hủy khởi động.")
             return
 
+    tree.add_command(quest_group)
     tree.add_command(stream_group)
     tree.add_command(admin_group)
     try:
