@@ -1426,6 +1426,8 @@ class PublicQuestProgressTracker:
                 item["bar"] = data.get("bar", item["bar"])
                 item["countdown"] = data.get("countdown", item["countdown"])
                 item["state"] = data.get("state", item["state"])
+                if "error" in data:
+                    item["error"] = data["error"]
                 break
 
     def build_live_embed(self) -> discord.Embed:
@@ -1436,10 +1438,15 @@ class PublicQuestProgressTracker:
         orbs_str = f"`{self.orbs:,}` Orbs" if self.orbs is not None else "Đang kiểm tra..."
         working_count = len([x for x in self.live_items if x["state"] == "working"])
         done_count = len([x for x in self.live_items if x["state"] in ("done", "claimed")])
+        failed_count = len([x for x in self.live_items if x["state"] == "failed"])
+
+        status_line = f"🟢 Đang thực hiện (`{working_count}` đang chạy, `{done_count}` đã xong)"
+        if failed_count > 0:
+            status_line += f", `{failed_count}` tạm hoãn/thất bại"
 
         embed.description = (
             f"👤 **Người dùng:** {self.user.mention} | 🔮 **Số dư Orbs:** {orbs_str}\n"
-            f"⚡ **Trạng thái:** 🟢 Đang thực hiện (`{working_count}` đang chạy, `{done_count}` đã xong)\n"
+            f"⚡ **Trạng thái:** {status_line}\n"
             f"⏱️ **Tiến trình tự động cập nhật mỗi 5 giây...**\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
@@ -1462,7 +1469,8 @@ class PublicQuestProgressTracker:
             elif item["state"] == "claimed":
                 state_badge = "★ Đã nhận quà (claimed)"
             elif item["state"] == "failed":
-                state_badge = "❌ Thất bại (failed)"
+                err_text = item.get("error")
+                state_badge = f"❌ Thất bại ({err_text})" if err_text else "❌ Thất bại (failed)"
 
             field_val = (
                 f"• **Loại:** {ttype_vn}\n"
@@ -1514,9 +1522,13 @@ class PublicQuestProgressTracker:
             status_text = "SUCCESS" if res.get("success") else "FAILED"
             status_emoji = "✅" if res.get("success") else "❌"
             reward = res.get("reward", "Reward")
+            note = res.get("note")
+            res_val = f"• Kết quả: {status_emoji} **{status_text}**\n• Phần thưởng: 🎁 `{reward}`"
+            if note:
+                res_val += f"\n• Ghi chú: `{note}`"
             embed.add_field(
                 name=f"{icon} {name[:30]}",
-                value=f"• Kết quả: {status_emoji} **{status_text}**\n• Phần thưởng: 🎁 `{reward}`",
+                value=res_val,
                 inline=True,
             )
 
@@ -1606,7 +1618,13 @@ async def run_public_auto_quests(
     if target_quest_id:
         pending = [q for q in pending if q.id == target_quest_id.strip()]
 
-    # 3. If no pending quests
+    # Process already-enrolled quests first to bypass rate-limits
+    pending.sort(key=lambda q: 0 if q.is_enrolled() else 1)
+
+    # 3. If no pending quests or all quests blocked by rate-limit
+    is_blocked, wait_sec, block_msg = store.is_enrollment_blocked()
+    unaccepted = [q for q in pending if not q.is_enrolled()]
+
     if not pending:
         claimable = store.claimable()
         claimed = 0
@@ -1629,6 +1647,23 @@ async def run_public_auto_quests(
         )
         done_embed.set_footer(text="HieuTool Discord-Auto-Quests Engine")
         await public_msg.edit(embed=done_embed)
+        return
+
+    if is_blocked and len(unaccepted) == len(pending):
+        blocked_embed = discord.Embed(
+            title=f"⏳ {mode_title} · TẠM DỪNG DO RATE LIMIT DISCORD",
+            description=(
+                f"👤 **Người dùng:** {interaction.user.mention}\n"
+                f"🔮 **Số dư Orbs:** `{tracker.orbs:,} Orbs`\n\n"
+                f"🚫 **Discord đang tạm giới hạn tần suất nhận Quests trên tài khoản (HTTP 429)!**\n"
+                f"⏱️ **Thời gian cần chờ:** `{quest_manager.format_countdown(wait_sec)}`\n\n"
+                f"💡 Hiện tại có **{len(unaccepted)}** nhiệm vụ mới chưa thể nhận do giới hạn từ Discord.\n"
+                f"Vui lòng đợi `{quest_manager.format_countdown(wait_sec)}` rồi bấm thực hiện lại!"
+            ),
+            color=discord.Color.gold(),
+        )
+        blocked_embed.set_footer(text="HieuTool Discord-Auto-Quests Engine · Tự động bảo vệ tài khoản")
+        await public_msg.edit(embed=blocked_embed)
         return
 
     # 4. Populate live items
@@ -1660,17 +1695,22 @@ async def run_public_auto_quests(
 
         success = await asyncio.to_thread(store.execute_quest, q, on_tick)
         item = next((x for x in tracker.live_items if x["id"] == q.id), None)
+        note = "Thành công" if success else "Thất bại"
         if item:
             item["state"] = "claimed" if success else "failed"
             item["countdown"] = 0
-            item["current"] = item["target"]
-            item["percent"] = 100
+            if success:
+                item["current"] = item["target"]
+                item["percent"] = 100
+            elif "error" in item:
+                note = item["error"]
 
         tracker.results.append({
             "icon": quest_manager.task_icon(q.detect_task_type()),
             "name": q.name,
             "success": success,
             "reward": q.get_reward_label(),
+            "note": note,
         })
 
     # 6. Finalize with Orbs balance update
@@ -1728,9 +1768,11 @@ async def handle_quest_enroll_all(interaction: discord.Interaction) -> None:
             return await interaction.followup.send(embed=embed, ephemeral=True)
 
         enrolled, total, logs = await asyncio.to_thread(quest_manager.auto_enroll_all_quests, state.token)
+        is_warning = any("429" in log or "giới hạn" in log or "⚠️" in log or "🚫" in log for log in logs)
+        embed_color = discord.Color.green() if enrolled > 0 else (discord.Color.gold() if is_warning else discord.Color.blurple())
         embed = discord.Embed(
             title=f"⚡ Kết Quả Tự Động Nhận Quests ({enrolled}/{total})",
-            color=discord.Color.green() if enrolled > 0 else discord.Color.blurple(),
+            color=embed_color,
         )
         embed.description = "\n".join(logs[:15]) if logs else "Không có nhiệm vụ nào cần nhận."
         embed.set_footer(text="Bấm '🎯 Quản Lý Quests' để kiểm tra lại toàn bộ danh sách.")

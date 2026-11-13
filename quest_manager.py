@@ -33,6 +33,11 @@ USER_AGENT = (
     "(KHTML, like Gecko) discord/1.0.9215 Chrome/138.0.7204.251 Electron/37.6.0 Safari/537.36"
 )
 
+# Generate session UUIDs once per process to mimic Discord Client session consistency
+SESSION_LAUNCH_ID = str(uuid.uuid4())
+SESSION_LAUNCH_SIGNATURE = str(uuid.uuid4())
+SESSION_HEARTBEAT_SESSION_ID = str(uuid.uuid4())
+
 CLIENT_PROPS = {
     "os": "Windows",
     "browser": "Discord Client",
@@ -43,25 +48,23 @@ CLIENT_PROPS = {
     "app_arch": "x64",
     "system_locale": "en-US",
     "has_client_mods": False,
-    "client_launch_id": str(uuid.uuid4()),
+    "client_launch_id": SESSION_LAUNCH_ID,
     "browser_user_agent": USER_AGENT,
     "browser_version": "37.6.0",
     "os_sdk_version": "19045",
     "client_build_number": 471091,
     "native_build_number": 72186,
     "client_event_source": None,
-    "launch_signature": str(uuid.uuid4()),
-    "client_heartbeat_session_id": str(uuid.uuid4()),
+    "launch_signature": SESSION_LAUNCH_SIGNATURE,
+    "client_heartbeat_session_id": SESSION_HEARTBEAT_SESSION_ID,
     "client_app_state": "focused",
 }
 
+STATIC_SUPER_PROPERTIES = base64.b64encode(json.dumps(CLIENT_PROPS).encode("utf-8")).decode("utf-8")
+
 
 def build_super_properties() -> str:
-    props = dict(CLIENT_PROPS)
-    props["client_launch_id"] = str(uuid.uuid4())
-    props["launch_signature"] = str(uuid.uuid4())
-    props["client_heartbeat_session_id"] = str(uuid.uuid4())
-    return base64.b64encode(json.dumps(props).encode("utf-8")).decode("utf-8")
+    return STATIC_SUPER_PROPERTIES
 
 
 def build_headers(token: str) -> dict[str, str]:
@@ -87,7 +90,7 @@ def build_headers(token: str) -> dict[str, str]:
         "x-debug-options": "bugReporterEnabled",
         "x-discord-locale": "en-US",
         "x-discord-timezone": "Asia/Saigon",
-        "x-super-properties": build_super_properties(),
+        "x-super-properties": STATIC_SUPER_PROPERTIES,
     }
 
 
@@ -120,8 +123,8 @@ def quest_api_call(
             err_data = {"message": str(exc.reason)}
 
         # Rate Limit (HTTP 429) Automatic Backoff
-        if exc.code == 429 and retries_left > 0:
-            retry_after = 3.0
+        if exc.code == 429:
+            retry_after = 5.0
             if isinstance(err_data, dict) and "retry_after" in err_data:
                 try:
                     retry_after = float(err_data["retry_after"])
@@ -132,21 +135,45 @@ def quest_api_call(
                     retry_after = float(exc.headers["Retry-After"])
                 except Exception:
                     pass
-            wait_time = min(max(retry_after + 0.5, 1.0), 30.0)
-            print(f"⏳ [Discord Rate Limit 429] Tạm dừng {wait_time:.1f}s trước khi thử lại...")
-            time.sleep(wait_time)
-            return quest_api_call(
-                url=url,
-                token=token,
-                method=method,
-                body=body,
-                timeout=timeout,
-                retries_left=retries_left - 1,
-            )
+
+            if isinstance(err_data, dict):
+                err_data["retry_after"] = retry_after
+
+            # Retry if under 60s and retries available
+            if retries_left > 0 and retry_after <= 60.0:
+                wait_time = retry_after + 1.0
+                print(f"⏳ [Discord Rate Limit 429] Tạm dừng {wait_time:.1f}s trước khi thử lại ({url})...")
+                time.sleep(wait_time)
+                return quest_api_call(
+                    url=url,
+                    token=token,
+                    method=method,
+                    body=body,
+                    timeout=timeout,
+                    retries_left=retries_left - 1,
+                )
 
         return exc.code, err_data
     except Exception as exc:
         return 0, {"message": str(exc)}
+
+
+class EnrollResult:
+    """Helper wrapper for enroll results that works as bool, tuple unpacking, and object."""
+    def __init__(self, success: bool, message: str, retry_after: float = 0.0):
+        self.success = bool(success)
+        self.message = str(message)
+        self.retry_after = float(retry_after)
+
+    def __bool__(self) -> bool:
+        return self.success
+
+    def __iter__(self):
+        yield self.success
+        yield self.message
+
+    def __repr__(self) -> str:
+        return f"<EnrollResult success={self.success} msg={self.message}>"
 
 
 def parse_expiration(val: Any) -> Optional[datetime]:
@@ -546,11 +573,23 @@ class QuestStore:
     def __init__(self, token: str):
         self.token = token.strip()
         self.pool: dict[str, Quest] = {}
+        self.blocked_until: Optional[datetime] = None
+        self.excluded_quests: list[dict[str, Any]] = []
 
     def load_quests(self) -> list[Quest]:
         status, data = quest_api_call(f"{DISCORD_API_BASE}/quests/@me", self.token, method="GET")
         if status != 200 or not isinstance(data, dict):
             return []
+
+        # Check if account is temporarily blocked from enrolling by Discord
+        raw_blocked = data.get("quest_enrollment_blocked_until")
+        if raw_blocked:
+            self.blocked_until = parse_expiration(raw_blocked)
+        else:
+            self.blocked_until = None
+
+        self.excluded_quests = data.get("excluded_quests") or []
+
         raw_list = data.get("quests") or []
         self.pool.clear()
         for q_raw in raw_list:
@@ -558,6 +597,21 @@ class QuestStore:
                 q = Quest(q_raw)
                 self.pool[q.id] = q
         return list(self.pool.values())
+
+    def is_enrollment_blocked(self) -> tuple[bool, int, str]:
+        """
+        Checks whether the account is currently blocked by Discord from enrolling in new quests.
+        Returns (is_blocked, remaining_seconds, friendly_message).
+        """
+        if not self.blocked_until:
+            return False, 0, ""
+        now = datetime.now(timezone.utc)
+        diff = int((self.blocked_until - now).total_seconds())
+        if diff > 0:
+            msg = f"Tài khoản bị giới hạn nhận quest mới (Cần chờ {format_countdown(diff)})"
+            return True, diff, msg
+        self.blocked_until = None
+        return False, 0, ""
 
     def all(self) -> list[Quest]:
         return list(self.pool.values())
@@ -575,7 +629,15 @@ class QuestStore:
     def claimable(self) -> list[Quest]:
         return [q for q in self.all() if q.is_completed() and not q.is_claimed()]
 
-    def enroll(self, quest_id: str) -> bool:
+    def enroll(self, quest_id: str) -> EnrollResult:
+        is_blocked, wait_sec, block_msg = self.is_enrollment_blocked()
+        if is_blocked:
+            return EnrollResult(
+                False,
+                f"Bị giới hạn tần suất yêu cầu Discord (429). Cần chờ {format_countdown(wait_sec)}",
+                retry_after=wait_sec,
+            )
+
         status, res = quest_api_call(
             f"{DISCORD_API_BASE}/quests/{quest_id}/enroll",
             self.token,
@@ -586,8 +648,28 @@ class QuestStore:
             q = self.find(quest_id)
             if q:
                 q.refresh_status(res)
-            return True
-        return False
+            return EnrollResult(True, "Đã nhận nhiệm vụ thành công!")
+
+        if status == 429:
+            retry_after = 60.0
+            if isinstance(res, dict) and "retry_after" in res:
+                try:
+                    retry_after = float(res["retry_after"])
+                except Exception:
+                    pass
+            if retry_after > 0:
+                self.blocked_until = datetime.now(timezone.utc) + timedelta(seconds=retry_after)
+            cd_str = format_countdown(int(retry_after))
+            return EnrollResult(
+                False,
+                f"Bị giới hạn tần suất yêu cầu Discord (429). Cần chờ {cd_str}",
+                retry_after=retry_after,
+            )
+
+        err_msg = "Không thể nhận nhiệm vụ"
+        if isinstance(res, dict) and "message" in res:
+            err_msg = str(res["message"])
+        return EnrollResult(False, f"{err_msg} (HTTP {status})")
 
     def grab_reward(self, quest_id: str) -> bool:
         status, res = quest_api_call(
@@ -841,8 +923,24 @@ class QuestStore:
             return False
 
         if not quest.is_enrolled():
-            self.enroll(quest.id)
-            time.sleep(1.0)
+            res = self.enroll(quest.id)
+            if not res.success:
+                print(f"⚠️ [Execute Quest] Bỏ qua {quest.name} vì không thể nhận quest: {res.message}")
+                if on_tick:
+                    on_tick({
+                        "quest_id": quest.id,
+                        "quest_name": quest.name,
+                        "task_type": task_type,
+                        "current": 0,
+                        "target": quest.get_target(),
+                        "percent": 0,
+                        "bar": make_progress_bar(0, quest.get_target()),
+                        "countdown": quest.get_remaining(),
+                        "state": "failed",
+                        "error": res.message,
+                    })
+                return False
+            time.sleep(2.0)
 
         # Dispatch execution
         if task_type in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE"):
@@ -885,14 +983,18 @@ def fetch_all_quests(token: str, super_props: str = "") -> tuple[bool, list[Ques
         return False, [], "Không tìm thấy nhiệm vụ nào hoặc Token không hợp lệ."
     active_cnt = len([q for q in quests if not q.is_expired()])
     expired_cnt = len(quests) - active_cnt
-    return True, quests, f"Tìm thấy {len(quests)} nhiệm vụ ({active_cnt} khả dụng, {expired_cnt} đã hết hạn)."
+    is_blocked, wait_sec, _ = store.is_enrollment_blocked()
+    extra = ""
+    if is_blocked:
+        extra = f" ⚠️ (Tài khoản đang tạm khóa nhận quest: còn {format_countdown(wait_sec)})"
+    return True, quests, f"Tìm thấy {len(quests)} nhiệm vụ ({active_cnt} khả dụng, {expired_cnt} đã hết hạn).{extra}"
 
 
 def enroll_quest(token: str, quest_id: str, super_props: str = "") -> tuple[bool, str]:
     store = QuestStore(token)
-    if store.enroll(quest_id):
-        return True, "Đã nhận nhiệm vụ thành công!"
-    return False, "Không thể nhận quest (Lỗi Discord hoặc quest đã hết hạn)."
+    store.load_quests()
+    res = store.enroll(quest_id)
+    return res.success, res.message
 
 
 def auto_enroll_all_quests(token: str, super_props: str = "") -> tuple[int, int, list[str]]:
@@ -904,15 +1006,35 @@ def auto_enroll_all_quests(token: str, super_props: str = "") -> tuple[int, int,
     if not unaccepted:
         return 0, len(pending), ["✨ Tất cả nhiệm vụ còn hạn đều đã được nhận trước đó!"]
 
+    # Pre-check if Discord is currently blocking enrollments
+    is_blocked, wait_sec, _ = store.is_enrollment_blocked()
+    if is_blocked:
+        return 0, len(unaccepted), [
+            f"🚫 **Discord đang tạm giới hạn tần suất nhận Quests trên tài khoản (Rate Limit 429)!**",
+            f"⏳ **Thời gian mở khóa:** Còn `{format_countdown(wait_sec)}` nữa mới có thể nhận thêm quest mới.",
+            f"💡 **Lưu ý:** Các nhiệm vụ đã nhận trước đó vẫn có thể chạy bình thường bằng `/quest auto`!",
+        ]
+
     enrolled_count = 0
     logs = []
-    for q in unaccepted:
-        if store.enroll(q.id):
+    for i, q in enumerate(unaccepted):
+        res = store.enroll(q.id)
+        if res.success:
             enrolled_count += 1
             logs.append(f"✅ Đã nhận: **{q.name}**")
+            # Human-like pacing between successful enrollments (3.0 - 4.5s)
+            if i < len(unaccepted) - 1:
+                time.sleep(random.uniform(3.0, 4.5))
         else:
-            logs.append(f"⚠️ Không thể nhận: **{q.name}**")
-        time.sleep(random.uniform(0.6, 1.2))
+            logs.append(f"⚠️ **{q.name}**: {res.message}")
+            # If rate limited (429 or blocked), stop immediately to avoid prolonged lockout
+            if res.retry_after > 0 or "429" in res.message:
+                remaining = len(unaccepted) - 1 - i
+                if remaining > 0:
+                    logs.append(
+                        f"🛑 **Đã tự động dừng nhận thêm {remaining} quest còn lại** để tránh bị Discord phạt cooldown kéo dài."
+                    )
+                break
 
     return enrolled_count, len(unaccepted), logs
 
@@ -926,6 +1048,11 @@ def complete_video_quest(
 ) -> tuple[bool, str]:
     store = QuestStore(token)
     store.pool[quest.id] = quest
+    if not quest.is_enrolled():
+        res = store.enroll(quest.id)
+        if not res.success:
+            return False, f"Không thể nhận quest: {res.message}"
+        time.sleep(2.0)
     ok = store.execute_video_watch(quest, on_tick=on_progress)
     store.grab_reward(quest.id)
     return ok, f"✅ Đã hoàn thành xem video: **{quest.name}**"
@@ -941,6 +1068,11 @@ def simulate_desktop_game_quest(
 ) -> tuple[bool, str]:
     store = QuestStore(token)
     store.pool[quest.id] = quest
+    if not quest.is_enrolled():
+        res = store.enroll(quest.id)
+        if not res.success:
+            return False, f"Không thể nhận quest: {res.message}"
+        time.sleep(2.0)
     ok = store.execute_desktop_gameplay(quest, "PLAY_ON_DESKTOP", on_tick=on_progress)
     store.grab_reward(quest.id)
     return ok, f"✅ Đã hoàn thành game PC: **{quest.name}**"
@@ -1005,24 +1137,35 @@ def auto_run_quest_flow(
         summary["logs"].append("✨ Không có nhiệm vụ nào đang chờ xử lý!")
         return summary
 
+    # Process already-enrolled quests first
+    pending.sort(key=lambda q: 0 if q.is_enrolled() else 1)
+
     for q in pending:
         ttype = q.detect_task_type()
         if not q.is_enrolled():
-            if store.enroll(q.id):
+            res = store.enroll(q.id)
+            if res.success:
                 summary["enrolled_new"] += 1
                 summary["logs"].append(f"✅ Đã nhận: **{q.name}**")
-            time.sleep(1.0)
+                time.sleep(2.0)
+            else:
+                summary["logs"].append(f"⚠️ Không thể nhận **{q.name}**: {res.message}")
+                if "429" in res.message or res.retry_after > 0:
+                    summary["logs"].append("🛑 Bị giới hạn tần suất Discord, bỏ qua các quest chưa nhận.")
+                continue
 
-        store.execute_quest(q, on_tick=on_progress)
-        if ttype in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE"):
-            summary["video_completed"] += 1
-            summary["logs"].append(f"🎬 Video: Hoàn thành **{q.name}**")
-        elif ttype in ("PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"):
-            summary["desktop_simulated"] += 1
-            summary["logs"].append(f"🎮 Desktop: Hoàn thành **{q.name}**")
+        ok = store.execute_quest(q, on_tick=on_progress)
+        if ok:
+            if ttype in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE"):
+                summary["video_completed"] += 1
+                summary["logs"].append(f"🎬 Video: Hoàn thành **{q.name}**")
+            elif ttype in ("PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"):
+                summary["desktop_simulated"] += 1
+                summary["logs"].append(f"🎮 Desktop: Hoàn thành **{q.name}**")
+            else:
+                summary["logs"].append(f"✨ Hoàn thành **{q.name}** ({task_label_vn(ttype)})")
+            summary["claimed"] += 1
         else:
-            summary["logs"].append(f"✨ Hoàn thành **{q.name}** ({task_label_vn(ttype)})")
-
-        summary["claimed"] += 1
+            summary["logs"].append(f"❌ Thất bại: **{q.name}**")
 
     return summary
