@@ -1272,17 +1272,33 @@ def build_user_quests_embed(user_id: int, quests: list[quest_manager.QuestItem])
         )
         return embed
 
-    enrolled_count = len([q for q in quests if q.is_enrolled])
-    completed_count = len([q for q in quests if q.is_completed])
-    claimed_count = len([q for q in quests if q.is_claimed])
+    active_quests = [q for q in quests if not q.is_expired]
+    expired_quests = [q for q in quests if q.is_expired]
+    enrolled_count = len([q for q in active_quests if q.is_enrolled])
+    completed_count = len([q for q in active_quests if q.is_completed])
+    claimed_count = len([q for q in active_quests if q.is_claimed])
 
-    embed.description = (
+    desc = (
         f"Người dùng: <@{user_id}>\n"
-        f"Tổng cộng: **{len(quests)}** nhiệm vụ | Đang làm: **{enrolled_count}** | Hoàn thành: **{completed_count}** | Đã nhận quà: **{claimed_count}**\n\n"
+        f"📊 **{len(active_quests)}** nhiệm vụ khả dụng"
+    )
+    if expired_quests:
+        desc += f" *(Đã tự động lọc bỏ **{len(expired_quests)}** quest cũ hết hạn)*"
+    desc += (
+        f"\n⏳ Đang làm: **{enrolled_count}** | ✅ Chờ claim quà: **{completed_count}** | 🎁 Đã nhận quà: **{claimed_count}**\n\n"
         "⚡ *Bấm các nút bên dưới để tự động nhận tất cả, xem video, chạy tiến trình game PC hoặc nhận phần thưởng.*"
     )
+    embed.description = desc
 
-    for q in quests[:12]:
+    # Sort quests so active actionable quests appear first
+    sorted_quests = (
+        [q for q in active_quests if not q.is_completed]
+        + [q for q in active_quests if q.is_completed and not q.is_claimed]
+        + [q for q in active_quests if q.is_claimed]
+        + expired_quests
+    )
+
+    for q in sorted_quests[:12]:
         task_lines = []
         for t in q.tasks:
             t_name_vn = {
@@ -1316,6 +1332,51 @@ def build_user_quests_embed(user_id: int, quests: list[quest_manager.QuestItem])
 
     embed.set_footer(text="Discord Badge Maximizer · Auto Quest Completer")
     return embed
+
+
+async def send_quest_notification(
+    interaction: discord.Interaction,
+    title: str,
+    description: str,
+    color: discord.Color = discord.Color.green(),
+    fields: Optional[list[tuple[str, str, bool]]] = None,
+) -> None:
+    """
+    Sends a real Discord notification (mentioning the user) to ensure the user gets
+    push notifications and alerts when Auto Quest actions start and complete.
+    """
+    user = interaction.user
+    embed = discord.Embed(title=title, description=description, color=color)
+    if fields:
+        for fname, fval, inline in fields:
+            embed.add_field(name=fname, value=fval, inline=inline)
+    embed.set_footer(text="Discord Badge Maximizer · Auto Quest Notifications")
+
+    content = f"🔔 {user.mention}"
+    sent = False
+
+    # 1. Try sending to the channel where interaction happened
+    if interaction.channel and hasattr(interaction.channel, "send"):
+        try:
+            await interaction.channel.send(content=content, embed=embed)
+            sent = True
+        except Exception:
+            pass
+
+    # 2. Try sending DM if channel failed
+    if not sent:
+        try:
+            await user.send(content=content, embed=embed)
+            sent = True
+        except Exception:
+            pass
+
+    # 3. Fallback to ephemeral followup
+    if not sent:
+        try:
+            await interaction.followup.send(content=content, embed=embed, ephemeral=True)
+        except Exception:
+            pass
 
 
 class LiveProgressController:
@@ -1382,8 +1443,8 @@ class LiveProgressController:
                 await self.interaction.response.send_message(embed=embed, ephemeral=True)
             else:
                 await self.interaction.edit_original_response(embed=embed)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[LiveProgressController Error] {exc}")
 
 
 async def handle_quest_panel(interaction: discord.Interaction) -> None:
@@ -1444,6 +1505,14 @@ async def handle_quest_enroll_all(interaction: discord.Interaction) -> None:
         embed.set_footer(text="Bấm '🎯 Quản Lý Quests' để kiểm tra lại toàn bộ danh sách.")
         view = QuestControlView()
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+        # Send notification alert
+        await send_quest_notification(
+            interaction,
+            title=f"⚡ [Thông Báo] Nhận Quests ({enrolled}/{total})",
+            description="\n".join(logs[:8]) if logs else "Đã kiểm tra xong các nhiệm vụ.",
+            color=discord.Color.green() if enrolled > 0 else discord.Color.blue(),
+        )
     except Exception as exc:
         print(f"[handle_quest_enroll_all Error] {exc}")
 
@@ -1464,16 +1533,31 @@ async def handle_quest_video(interaction: discord.Interaction) -> None:
 
         video_quests = [
             q for q in quests
-            if any(t.task_name in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE") for t in q.tasks) and not q.is_completed
+            if not q.is_expired and not q.is_completed and q.has_video_task
+        ]
+        expired_video = [
+            q for q in quests
+            if q.is_expired and q.has_video_task
         ]
 
         if not video_quests:
+            desc = "ℹ️ Không có nhiệm vụ dạng xem Video nào còn hiệu lực đang chờ hoàn thành!"
+            if expired_video:
+                desc += f"\n\n💡 *Hệ thống đã tự động lọc và bỏ qua **{len(expired_video)}** video quest cũ đã hết hạn để tránh lỗi HTTP 404 từ Discord.*"
             embed = discord.Embed(
                 title="🎬 Video Quests",
-                description="ℹ️ Không có nhiệm vụ dạng xem Video nào đang chờ hoàn thành!",
+                description=desc,
                 color=discord.Color.blue(),
             )
             return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        # Send initial notification that video quest execution has started
+        await send_quest_notification(
+            interaction,
+            title="🎬 [Thông Báo] Bắt Đầu Làm Video Quests",
+            description=f"Hệ thống đang tự động xem **{len(video_quests)}** video quests còn hạn...",
+            color=discord.Color.blue(),
+        )
 
         controller = LiveProgressController(interaction, title="Tiến Trình Chạy Video Quest")
         results = []
@@ -1488,11 +1572,21 @@ async def handle_quest_video(interaction: discord.Interaction) -> None:
 
         embed = discord.Embed(
             title=f"🎬 Hoàn Thành Video Quests ({len(results)})",
-            description="\n".join(results),
+            description="\n".join(results[:15]),
             color=discord.Color.green(),
         )
+        if expired_video:
+            embed.set_footer(text=f"Đã bỏ qua {len(expired_video)} nhiệm vụ video cũ đã hết hạn.")
         view = QuestControlView()
         await interaction.edit_original_response(embed=embed, view=view)
+
+        # Send final completion notification
+        await send_quest_notification(
+            interaction,
+            title=f"🎬 [Thông Báo] Hoàn Thành Video Quests ({len(results)})",
+            description="\n".join(results[:10]),
+            color=discord.Color.green(),
+        )
     except Exception as exc:
         print(f"[handle_quest_video Error] {exc}")
 
@@ -1513,18 +1607,33 @@ async def handle_quest_desktop(interaction: discord.Interaction, quest_id: Optio
 
         desktop_quests = [
             q for q in quests
-            if any(t.task_name in ("PLAY_ON_DESKTOP", "PLAY_ACTIVITY") for t in q.tasks) and not q.is_completed
+            if not q.is_expired and not q.is_completed and q.has_desktop_task
+        ]
+        expired_desktop = [
+            q for q in quests
+            if q.is_expired and q.has_desktop_task
         ]
         if quest_id:
             desktop_quests = [q for q in desktop_quests if q.id == quest_id.strip()]
 
         if not desktop_quests:
+            desc = "ℹ️ Không có nhiệm vụ dạng Chơi Game PC nào còn hiệu lực đang chờ hoàn thành!"
+            if expired_desktop:
+                desc += f"\n\n💡 *Hệ thống đã tự động lọc và bỏ qua **{len(expired_desktop)}** game quest cũ đã hết hạn để tránh lỗi.*"
             embed = discord.Embed(
                 title="🎮 Game Process Quests (PC)",
-                description="ℹ️ Không có nhiệm vụ dạng Chơi Game PC nào đang chờ hoàn thành!",
+                description=desc,
                 color=discord.Color.blue(),
             )
             return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        # Send initial start notification
+        await send_quest_notification(
+            interaction,
+            title="🎮 [Thông Báo] Bắt Đầu Game Process PC",
+            description=f"Khởi động giả lập tiến trình game cho **{len(desktop_quests)}** quests...",
+            color=discord.Color.blue(),
+        )
 
         controller = LiveProgressController(interaction, title="Tiến Trình Giả Lập Game Process (PC)")
         results = []
@@ -1535,17 +1644,25 @@ async def handle_quest_desktop(interaction: discord.Interaction, quest_id: Optio
                 q,
                 channel_id=state.last_channel_id,
                 on_progress=controller.on_progress,
-                step_seconds=15,
+                step_seconds=30,
             )
             results.append(d_msg)
 
         embed = discord.Embed(
             title=f"🎮 Hoàn Thành Tiến Trình Game Quests ({len(results)})",
-            description="\n".join(results),
+            description="\n".join(results[:15]),
             color=discord.Color.green(),
         )
         view = QuestControlView()
         await interaction.edit_original_response(embed=embed, view=view)
+
+        # Send completion notification
+        await send_quest_notification(
+            interaction,
+            title=f"🎮 [Thông Báo] Hoàn Thành Game Quests ({len(results)})",
+            description="\n".join(results[:10]),
+            color=discord.Color.green(),
+        )
     except Exception as exc:
         print(f"[handle_quest_desktop Error] {exc}")
 
@@ -1563,11 +1680,19 @@ async def handle_quest_claim(interaction: discord.Interaction) -> None:
         claimed, logs = await asyncio.to_thread(quest_manager.claim_all_completed_quests, state.token)
         embed = discord.Embed(
             title=f"🎁 Nhận Quà Nhiệm Vụ ({claimed} đã nhận)",
-            description="\n".join(logs) if logs else "Không có nhiệm vụ nào đang chờ nhận quà.",
+            description="\n".join(logs[:15]) if logs else "Không có nhiệm vụ nào đang chờ nhận quà.",
             color=discord.Color.green() if claimed > 0 else discord.Color.blue(),
         )
         view = QuestControlView()
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+        # Send notification alert
+        await send_quest_notification(
+            interaction,
+            title=f"🎁 [Thông Báo] Nhận Quà Quests ({claimed} đã nhận)",
+            description="\n".join(logs[:8]) if logs else "Đã kiểm tra phần thưởng.",
+            color=discord.Color.green() if claimed > 0 else discord.Color.blue(),
+        )
     except Exception as exc:
         print(f"[handle_quest_claim Error] {exc}")
 
@@ -1582,6 +1707,14 @@ async def handle_quest_full_auto(interaction: discord.Interaction) -> None:
         if not state.has_token:
             return await interaction.followup.send("⚠️ Bạn chưa cài đặt Token!", ephemeral=True)
 
+        # Send start notification
+        await send_quest_notification(
+            interaction,
+            title="🚀 [Thông Báo] Bắt Đầu Auto Quests Trọn Gói",
+            description="Hệ thống đang tự động quét nhiệm vụ, lọc bỏ quest hết hạn, tự động nhận, xem video, giả lập game và claim quà...",
+            color=discord.Color.blue(),
+        )
+
         controller = LiveProgressController(interaction, title="Tiến Trình Chạy Auto Quests Trọn Gói")
         summary = await asyncio.to_thread(
             quest_manager.auto_run_quest_flow,
@@ -1593,7 +1726,9 @@ async def handle_quest_full_auto(interaction: discord.Interaction) -> None:
             title="🚀 Kết Quả Chạy Auto Quests Trọn Gói",
             color=discord.Color.green(),
         )
-        embed.add_field(name="Tổng nhiệm vụ tìm thấy", value=f"`{summary['total_quests']}`", inline=True)
+        embed.add_field(name="Tổng quest tìm thấy", value=f"`{summary['total_quests']}`", inline=True)
+        embed.add_field(name="Quest còn hạn", value=f"`{summary.get('active_quests', 0)}`", inline=True)
+        embed.add_field(name="Quest hết hạn bỏ qua", value=f"`{summary.get('expired_quests', 0)}`", inline=True)
         embed.add_field(name="Đã nhận mới", value=f"`{summary['enrolled_new']}`", inline=True)
         embed.add_field(name="Video hoàn thành", value=f"`{summary['video_completed']}`", inline=True)
         embed.add_field(name="Game giả lập hoàn thành", value=f"`{summary.get('desktop_simulated', 0)}`", inline=True)
@@ -1604,6 +1739,23 @@ async def handle_quest_full_auto(interaction: discord.Interaction) -> None:
 
         view = QuestControlView()
         await interaction.edit_original_response(embed=embed, view=view)
+
+        # Send completion notification with fields
+        notif_fields = [
+            ("Quests còn hạn", f"`{summary.get('active_quests', 0)}`", True),
+            ("Đã nhận mới", f"`{summary['enrolled_new']}`", True),
+            ("Video xong", f"`{summary['video_completed']}`", True),
+            ("Game PC xong", f"`{summary.get('desktop_simulated', 0)}`", True),
+            ("Quà đã claim", f"`{summary['claimed']}`", True),
+            ("Hết hạn bỏ qua", f"`{summary.get('expired_quests', 0)}`", True),
+        ]
+        await send_quest_notification(
+            interaction,
+            title="🎉 [Thông Báo] Hoàn Tất Auto Quests Trọn Gói!",
+            description="\n".join(summary["logs"][:8]) if summary["logs"] else "Tất cả nhiệm vụ đã được xử lý xong.",
+            color=discord.Color.green(),
+            fields=notif_fields,
+        )
     except Exception as exc:
         print(f"[handle_quest_full_auto Error] {exc}")
 
@@ -1971,19 +2123,20 @@ def build_admin_quests_summary_embed() -> discord.Embed:
             continue
         ok, quests, _ = quest_manager.fetch_all_quests(state.token)
         if ok and quests:
-            total_quests_found += len(quests)
-            enrolled = len([q for q in quests if q.is_enrolled])
-            completed = len([q for q in quests if q.is_completed])
+            active_q = [q for q in quests if not q.is_expired]
+            total_quests_found += len(active_q)
+            enrolled = len([q for q in active_q if q.is_enrolled])
+            completed = len([q for q in active_q if q.is_completed])
             total_enrolled_found += enrolled
             total_completed_found += completed
-            user_rows.append(f"• <@{uid}>: `{len(quests)}` quests (`{enrolled}` đã nhận, `{completed}` đã xong)")
+            user_rows.append(f"• <@{uid}>: `{len(active_q)}` quests khả dụng (`{enrolled}` đã nhận, `{completed}` đã xong)")
         elif ok and not quests:
             user_rows.append(f"• <@{uid}>: 0 quests khả dụng")
         else:
             user_rows.append(f"• <@{uid}>: ⚠️ Lỗi đọc quest")
 
     embed.add_field(name="👥 Tổng Users có Token", value=f"**{len(user_rows)}** users", inline=True)
-    embed.add_field(name="🎯 Tổng Quests khả dụng", value=f"**{total_quests_found}** quests", inline=True)
+    embed.add_field(name="🎯 Quests Khả Dụng (Còn hạn)", value=f"**{total_quests_found}** quests", inline=True)
     embed.add_field(name="✅ Đã nhận / Đã xong", value=f"**{total_enrolled_found}** đã nhận / **{total_completed_found}** xong", inline=True)
 
     if user_rows:

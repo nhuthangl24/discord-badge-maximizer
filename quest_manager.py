@@ -9,6 +9,8 @@ Supports:
 - Auto VIDEO PROGRESS: Automatically simulate video watching for WATCH_VIDEO / WATCH_VIDEO_ON_MOBILE quests.
 - Auto HEARTBEAT: Send activity heartbeat for PLAY_ACTIVITY quests.
 - Auto CLAIM: Automatically claim rewards for completed quests.
+- Expiration & Error Guard: Filters out expired quests to prevent 404s, handles 429 rate-limiting with auto backoff.
+- Live Notifications: Detailed real-time notifications during auto quest execution.
 - Multi-User Isolation: Operates safely with user tokens stored securely via crypto_vault.
 - Admin Bulk Control: Allows administrators to auto-enroll quests for all users in the system.
 """
@@ -21,7 +23,7 @@ import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -29,6 +31,51 @@ from stream import USER_AGENT, Session, build_super_props
 
 QUESTS_URL = "https://discord.com/api/v9/quests/@me"
 DISCORD_API_BASE = "https://discord.com/api/v9"
+
+
+def parse_expiration(val: Any) -> Optional[datetime]:
+    """Parses various date/time formats into UTC datetime for expiration comparisons."""
+    if not val:
+        return None
+    if isinstance(val, (int, float)):
+        try:
+            return datetime.fromtimestamp(val, tz=timezone.utc)
+        except Exception:
+            return None
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return None
+        if val.isdigit():
+            try:
+                return datetime.fromtimestamp(int(val), tz=timezone.utc)
+            except Exception:
+                return None
+        clean = val.replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(clean)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            return None
+    return None
+
+
+def is_quest_expired(expires_at: Any) -> bool:
+    """Returns True if the quest expiration date is in the past."""
+    dt = parse_expiration(expires_at)
+    if dt is None:
+        return False
+    return dt < datetime.now(timezone.utc)
+
+
+def is_quest_started(starts_at: Any) -> bool:
+    """Returns True if the quest has started (starts_at is in past or empty)."""
+    dt = parse_expiration(starts_at)
+    if dt is None:
+        return True
+    return dt <= datetime.now(timezone.utc)
 
 
 @dataclass
@@ -67,6 +114,7 @@ class QuestItem:
     claimed_at: Optional[str] = None
     reward_name: str = ""
     raw_data: dict[str, Any] = field(default_factory=dict)
+    starts_at: str = ""
 
     @property
     def progress_bar(self) -> str:
@@ -74,6 +122,14 @@ class QuestItem:
             return "`[░░░░░░░░░░] 0%`"
         t0 = self.tasks[0]
         return make_progress_bar(t0.progress, t0.target)
+
+    @property
+    def is_expired(self) -> bool:
+        return is_quest_expired(self.expires_at)
+
+    @property
+    def is_active(self) -> bool:
+        return not self.is_expired and is_quest_started(self.starts_at)
 
     @property
     def is_enrolled(self) -> bool:
@@ -93,6 +149,9 @@ class QuestItem:
             return "🎁 Đã nhận quà (Claimed)"
         if self.is_completed:
             return "✅ Đã hoàn thành (Chờ claim)"
+        if self.is_expired:
+            exp_date = self.expires_at[:10] if self.expires_at else "Hết hạn"
+            return f"⏰ Đã hết hạn ({exp_date})"
         if self.is_enrolled:
             return "⏳ Đang thực hiện"
         return "✨ Mới (Chưa nhận)"
@@ -103,9 +162,19 @@ class QuestItem:
             return "🎁"
         if self.is_completed:
             return "✅"
+        if self.is_expired:
+            return "⌛"
         if self.is_enrolled:
             return "⏳"
         return "🆕"
+
+    @property
+    def has_video_task(self) -> bool:
+        return any(t.task_name in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE") for t in self.tasks)
+
+    @property
+    def has_desktop_task(self) -> bool:
+        return any(t.task_name in ("PLAY_ON_DESKTOP", "PLAY_ACTIVITY") for t in self.tasks)
 
 
 def _build_headers(token: str, super_props: str = "") -> dict[str, str]:
@@ -135,8 +204,12 @@ def _quest_api_call(
     body: Optional[dict[str, Any]] = None,
     super_props: str = "",
     timeout: int = 15,
+    retries_left: int = 2,
 ) -> tuple[int, Any]:
-    """Helper to perform REST calls to Discord Quest API endpoints."""
+    """
+    Helper to perform REST calls to Discord Quest API endpoints with automatic rate-limit backoff.
+    If Discord returns HTTP 429, this waits for retry_after and transparently retries.
+    """
     headers = _build_headers(token, super_props)
     data_bytes = None
     if body is not None:
@@ -149,10 +222,49 @@ def _quest_api_call(
             data = json.loads(raw) if raw else {}
             return resp.status, data
     except urllib.error.HTTPError as exc:
+        err_data = {}
         try:
-            err_data = json.loads(exc.read().decode("utf-8"))
+            raw_err = exc.read().decode("utf-8")
+            err_data = json.loads(raw_err) if raw_err else {}
         except Exception:
             err_data = {"message": str(exc.reason)}
+
+        # Rate Limit (HTTP 429) Automatic Backoff & Retry
+        if exc.code == 429 and retries_left > 0:
+            retry_after = 2.5
+            if isinstance(err_data, dict) and "retry_after" in err_data:
+                try:
+                    retry_after = float(err_data["retry_after"])
+                except Exception:
+                    pass
+            elif "Retry-After" in exc.headers:
+                try:
+                    retry_after = float(exc.headers["Retry-After"])
+                except Exception:
+                    pass
+            wait_time = min(max(retry_after + 0.5, 1.0), 30.0)
+            print(f"⏳ [Discord Rate Limit 429] Đang tạm dừng {wait_time:.1f}s trước khi thử lại...")
+            time.sleep(wait_time)
+            return _quest_api_call(
+                url=url,
+                token=token,
+                method=method,
+                body=body,
+                super_props=super_props,
+                timeout=timeout,
+                retries_left=retries_left - 1,
+            )
+
+        if exc.code == 404:
+            if isinstance(err_data, dict) and not err_data.get("message"):
+                err_data["message"] = "Nhiệm vụ không tồn tại hoặc đã hết hạn trên Discord (404)."
+        elif exc.code == 403:
+            if isinstance(err_data, dict) and not err_data.get("message"):
+                err_data["message"] = "Bị từ chối quyền truy cập hoặc tài khoản bị giới hạn tạm thời (403)."
+        elif exc.code == 400:
+            if isinstance(err_data, dict) and not err_data.get("message"):
+                err_data["message"] = "Yêu cầu không hợp lệ hoặc nhiệm vụ không thể nhận (400)."
+
         return exc.code, err_data
     except Exception as exc:
         return 0, {"message": str(exc)}
@@ -181,7 +293,8 @@ def parse_quest(q: dict[str, Any]) -> QuestItem:
     app_info = cfg.get("application") or {}
     app_id = str(app_info.get("id") or "")
 
-    expires_at = str(cfg.get("expires_at") or cfg.get("expiresAt") or "")
+    starts_at = str(cfg.get("starts_at") or cfg.get("startsAt") or q.get("starts_at") or q.get("startsAt") or "")
+    expires_at = str(cfg.get("expires_at") or cfg.get("expiresAt") or q.get("expires_at") or q.get("expiresAt") or "")
 
     # Rewards
     rewards_cfg = cfg.get("rewards_config") or cfg.get("rewardsConfig") or {}
@@ -199,9 +312,17 @@ def parse_quest(q: dict[str, Any]) -> QuestItem:
 
     # User Status
     status_obj = q.get("user_status") or q.get("userStatus") or {}
-    enrolled_at = status_obj.get("enrolled_at") or status_obj.get("enrolledAt")
+    enrolled_at = (
+        status_obj.get("enrolled_at")
+        or status_obj.get("enrolledAt")
+        or status_obj.get("enrollment_time")
+        or status_obj.get("enrollmentTime")
+    )
     completed_at = status_obj.get("completed_at") or status_obj.get("completedAt")
     claimed_at = status_obj.get("claimed_at") or status_obj.get("claimedAt")
+    if not claimed_at and status_obj.get("claimed_status"):
+        claimed_at = "CLAIMED"
+
     progress_dict = status_obj.get("progress") or {}
 
     # Tasks Config
@@ -219,12 +340,14 @@ def parse_quest(q: dict[str, Any]) -> QuestItem:
         for tname, tdata in raw_tasks.items():
             if not isinstance(tdata, dict):
                 continue
-            target_sec = int(tdata.get("target") or 0)
+            target_sec = int(tdata.get("target") or tdata.get("seconds_needed") or tdata.get("secondsNeeded") or 0)
             p_val = 0.0
             if isinstance(progress_dict, dict) and tname in progress_dict:
                 p_item = progress_dict[tname]
                 if isinstance(p_item, dict):
                     p_val = float(p_item.get("value") or 0.0)
+                    if p_item.get("completed") is True and target_sec > 0 and p_val < target_sec:
+                        p_val = float(target_sec)
                 elif isinstance(p_item, (int, float)):
                     p_val = float(p_item)
             apps = tdata.get("applications") or []
@@ -236,12 +359,34 @@ def parse_quest(q: dict[str, Any]) -> QuestItem:
                 progress=p_val,
                 applications=apps if isinstance(apps, list) else [],
             ))
+    elif isinstance(raw_tasks, list):
+        for tdata in raw_tasks:
+            if not isinstance(tdata, dict):
+                continue
+            tname = str(tdata.get("type") or tdata.get("task_name") or tdata.get("name") or "TASK")
+            target_sec = int(tdata.get("target") or tdata.get("seconds_needed") or tdata.get("secondsNeeded") or 0)
+            p_val = 0.0
+            if isinstance(progress_dict, dict) and tname in progress_dict:
+                p_item = progress_dict[tname]
+                if isinstance(p_item, dict):
+                    p_val = float(p_item.get("value") or 0.0)
+                    if p_item.get("completed") is True and target_sec > 0 and p_val < target_sec:
+                        p_val = float(target_sec)
+                elif isinstance(p_item, (int, float)):
+                    p_val = float(p_item)
+            parsed_tasks.append(QuestTask(
+                task_name=tname,
+                target=target_sec,
+                progress=p_val,
+                applications=[],
+            ))
 
     return QuestItem(
         id=qid,
         name=name,
         game_title=game_title,
         application_id=app_id,
+        starts_at=starts_at,
         expires_at=expires_at,
         tasks=parsed_tasks,
         enrolled_at=enrolled_at,
@@ -254,7 +399,7 @@ def parse_quest(q: dict[str, Any]) -> QuestItem:
 
 def fetch_all_quests(token: str, super_props: str = "") -> tuple[bool, list[QuestItem], str]:
     """
-    Fetches all available/active quests for the user token from Discord REST API.
+    Fetches all quests for the user token from Discord REST API.
     Returns: (success, list_of_quests, error_or_status_message)
     """
     if not token or not token.strip():
@@ -281,7 +426,10 @@ def fetch_all_quests(token: str, super_props: str = "") -> tuple[bool, list[Ques
             except Exception as e:
                 print(f"[Quest Parser Warning] {e}")
 
-    return True, items, f"Đã tìm thấy {len(items)} nhiệm vụ."
+    active_cnt = len([q for q in items if not q.is_expired])
+    expired_cnt = len(items) - active_cnt
+    msg_summary = f"Đã tìm thấy {len(items)} nhiệm vụ ({active_cnt} còn hạn, {expired_cnt} đã hết hạn)."
+    return True, items, msg_summary
 
 
 def enroll_quest(token: str, quest_id: str, super_props: str = "") -> tuple[bool, str]:
@@ -303,12 +451,16 @@ def enroll_quest(token: str, quest_id: str, super_props: str = "") -> tuple[bool
         return False, f"Lỗi yêu cầu: {msg}"
     if status == 401:
         return False, "Token không hợp lệ (401)."
-    return False, f"Không thể nhận quest (HTTP {status}: {data})"
+    if status == 404:
+        return False, "Nhiệm vụ không tồn tại hoặc đã hết hạn trên Discord (404)."
+    if status == 429:
+        return False, "Bị giới hạn tần suất yêu cầu Discord (429)."
+    return False, f"Không thể nhận quest (HTTP {status})"
 
 
 def auto_enroll_all_quests(token: str, super_props: str = "") -> tuple[int, int, list[str]]:
     """
-    Fetches all quests and automatically enrolls in all quests that are not yet accepted.
+    Fetches all quests and automatically enrolls in all ACTIVE quests that are not yet accepted.
     Returns: (enrolled_count, total_available, log_messages)
     """
     ok, quests, msg = fetch_all_quests(token, super_props)
@@ -316,20 +468,28 @@ def auto_enroll_all_quests(token: str, super_props: str = "") -> tuple[int, int,
         return 0, 0, [f"❌ {msg}"]
 
     logs: list[str] = []
-    enrolled_count = 0
-    to_enroll = [q for q in quests if not q.is_enrolled]
+    active_quests = [q for q in quests if not q.is_expired]
+    expired_quests = [q for q in quests if q.is_expired]
+
+    if expired_quests:
+        logs.append(f"ℹ️ Đã tự động bỏ qua {len(expired_quests)} nhiệm vụ cũ đã hết hạn.")
+
+    to_enroll = [q for q in active_quests if not q.is_enrolled]
 
     if not to_enroll:
-        return 0, len(quests), ["✨ Tất cả nhiệm vụ hiện có đều đã được nhận trước đó!"]
+        if not active_quests:
+            return 0, 0, logs + ["ℹ️ Không có nhiệm vụ nào còn hạn để nhận."]
+        return 0, len(active_quests), logs + ["✨ Tất cả nhiệm vụ còn hạn đều đã được nhận trước đó!"]
 
+    enrolled_count = 0
     for q in to_enroll:
         success, emsg = enroll_quest(token, q.id, super_props)
         if success:
             enrolled_count += 1
             logs.append(f"✅ Đã nhận: **{q.name}**")
+            q.enrolled_at = datetime.utcnow().isoformat()
         else:
             logs.append(f"⚠️ {q.name}: {emsg}")
-        # Small delay to mimic human behavior and avoid rate limits
         time.sleep(random.uniform(0.6, 1.2))
 
     return enrolled_count, len(to_enroll), logs
@@ -339,28 +499,38 @@ def complete_video_quest(
     token: str,
     quest: QuestItem,
     super_props: str = "",
-    speed_step: int = 5,
+    speed_step: int = 10,
     on_progress: Optional[Any] = None,
 ) -> tuple[bool, str]:
     """
-    Simulates video viewing progress for WATCH_VIDEO / WATCH_VIDEO_ON_MOBILE tasks.
-    Sends incremental video progress updates to Discord until completion.
+    Simulates video viewing progress for active WATCH_VIDEO / WATCH_VIDEO_ON_MOBILE tasks.
+    Filters expired quests, handles rate limits, and sends incremental video progress updates.
     """
+    if quest.is_expired:
+        exp_date = quest.expires_at[:10] if quest.expires_at else "Hết hạn"
+        return False, f"Bỏ qua: Nhiệm vụ '{quest.name}' đã hết hạn ({exp_date})."
+
     video_task = next(
         (t for t in quest.tasks if t.task_name in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE")),
         None,
     )
     if not video_task:
-        return False, "Nhiệm vụ này không phải dạng xem Video."
+        return False, f"Nhiệm vụ '{quest.name}' không phải dạng xem Video."
 
-    target = video_task.target or 30
+    if quest.is_completed:
+        return True, f"Nhiệm vụ '{quest.name}' đã hoàn thành trước đó."
+
+    target = video_task.target if video_task.target > 0 else 30
     current = int(video_task.progress or 0)
     url = f"{DISCORD_API_BASE}/quests/{quest.id}/video-progress"
 
     # Enroll first if not enrolled
     if not quest.is_enrolled:
-        enroll_quest(token, quest.id, super_props)
-        time.sleep(1.0)
+        ok_enroll, emsg = enroll_quest(token, quest.id, super_props)
+        if not ok_enroll:
+            return False, f"Không thể nhận nhiệm vụ '{quest.name}': {emsg}"
+        quest.enrolled_at = datetime.utcnow().isoformat()
+        time.sleep(1.2)
 
     print(f"🎬 [Quest Video Process] Bắt đầu xem video: {quest.name} ({current}s/{target}s)")
     if on_progress:
@@ -385,6 +555,26 @@ def complete_video_quest(
         timestamp_val = current + round(random.uniform(0.1, 0.9), 2)
         payload = {"timestamp": min(float(target), timestamp_val)}
         status, data = _quest_api_call(url, token, method="POST", body=payload, super_props=super_props)
+        
+        if status == 404:
+            err_msg = f"Nhiệm vụ '{quest.name}' không còn tồn tại hoặc đã hết hạn trên Discord (404)."
+            print(f"❌ [Quest Video Process] {err_msg}")
+            if on_progress:
+                try:
+                    on_progress({
+                        "quest_id": quest.id,
+                        "quest_name": quest.name,
+                        "status": "ERROR",
+                        "current": current,
+                        "target": target,
+                        "percent": int((current / target) * 100),
+                        "bar": make_progress_bar(current, target),
+                        "log": f"⚠️ {err_msg}",
+                    })
+                except Exception:
+                    pass
+            return False, err_msg
+
         if status not in (200, 201):
             err_msg = f"Lỗi gửi tiến độ video (HTTP {status})"
             print(f"❌ [Quest Video Process] {err_msg}")
@@ -428,6 +618,7 @@ def complete_video_quest(
 
         if isinstance(data, dict) and (data.get("completed_at") or data.get("completedAt")):
             print(f"✅ [Quest Video Process] Đã hoàn thành: {quest.name}")
+            quest.completed_at = datetime.utcnow().isoformat()
             if on_progress:
                 try:
                     on_progress({
@@ -446,11 +637,12 @@ def complete_video_quest(
                     pass
             return True, f"✅ Đã hoàn thành xem video: **{quest.name}**"
 
-        time.sleep(random.uniform(1.2, 2.0))
+        time.sleep(random.uniform(1.2, 1.8))
 
     # Send final completion ping
     payload = {"timestamp": float(target)}
     _quest_api_call(url, token, method="POST", body=payload, super_props=super_props)
+    quest.completed_at = datetime.utcnow().isoformat()
     print(f"✅ [Quest Video Process] Hoàn tất: {quest.name} ({target}s)")
     if on_progress:
         try:
@@ -477,18 +669,24 @@ def simulate_desktop_game_quest(
     super_props: str = "",
     channel_id: str = "",
     on_progress: Optional[Any] = None,
-    step_seconds: int = 15,
+    step_seconds: int = 30,
 ) -> tuple[bool, str]:
     """
     Simulates playing a verified desktop game process for PLAY_ON_DESKTOP / PLAY_ACTIVITY quests.
     Generates a spoofed OS Process PID, simulates game activity, and sends periodic heartbeat pings.
     """
+    if quest.is_expired:
+        return False, f"Bỏ qua: Nhiệm vụ '{quest.name}' đã hết hạn."
+
     task = next(
         (t for t in quest.tasks if t.task_name in ("PLAY_ON_DESKTOP", "PLAY_ACTIVITY")),
         None,
     )
     if not task:
-        return False, "Nhiệm vụ này không yêu cầu chơi game trên máy tính (Desktop/Activity)."
+        return False, f"Nhiệm vụ '{quest.name}' không yêu cầu chơi game trên máy tính (Desktop/Activity)."
+
+    if quest.is_completed:
+        return True, f"Nhiệm vụ '{quest.name}' đã hoàn thành trước đó."
 
     target = task.target or 900
     current = int(task.progress or 0)
@@ -521,8 +719,11 @@ def simulate_desktop_game_quest(
 
     # Enroll first if needed
     if not quest.is_enrolled:
-        enroll_quest(token, quest.id, super_props)
-        time.sleep(1.0)
+        ok_enroll, emsg = enroll_quest(token, quest.id, super_props)
+        if not ok_enroll:
+            return False, f"Không thể nhận nhiệm vụ '{quest.name}': {emsg}"
+        quest.enrolled_at = datetime.utcnow().isoformat()
+        time.sleep(1.2)
 
     url = f"{DISCORD_API_BASE}/quests/{quest.id}/heartbeat"
     stream_key = f"call:{channel_id}:1" if channel_id else ""
@@ -531,6 +732,17 @@ def simulate_desktop_game_quest(
         current = min(target, current + step_seconds)
         payload = {"stream_key": stream_key, "terminal": (current >= target)}
         status, data = _quest_api_call(url, token, method="POST", body=payload, super_props=super_props)
+        
+        if status == 404:
+            err_msg = f"Nhiệm vụ '{quest.name}' không còn tồn tại hoặc đã hết hạn trên Discord (404)."
+            print(f"❌ [Quest Desktop Process] {err_msg}")
+            return False, err_msg
+
+        if status not in (200, 201):
+            err_msg = f"Lỗi gửi heartbeat tiến trình game (HTTP {status})"
+            print(f"❌ [Quest Desktop Process] {err_msg}")
+            return False, err_msg
+
         if isinstance(data, dict):
             prog_dict = data.get("progress") or {}
             task_prog = prog_dict.get(task.task_name)
@@ -563,10 +775,11 @@ def simulate_desktop_game_quest(
         if current >= target:
             break
 
-        time.sleep(min(10.0, float(step_seconds)))
+        time.sleep(min(8.0, float(step_seconds)))
 
     # Terminal final ping
     _quest_api_call(url, token, method="POST", body={"stream_key": stream_key, "terminal": True}, super_props=super_props)
+    quest.completed_at = datetime.utcnow().isoformat()
     print(f"✅ [Quest Desktop Process] Tiến trình `{exe_name}` (PID: {fake_pid}) hoàn thành nhiệm vụ `{quest.name}`!")
     if on_progress:
         try:
@@ -599,6 +812,9 @@ def complete_activity_quest(
     """
     Sends heartbeat pings for PLAY_ACTIVITY quests.
     """
+    if quest.is_expired:
+        return False, f"Bỏ qua: Nhiệm vụ '{quest.name}' đã hết hạn."
+
     act_task = next((t for t in quest.tasks if t.task_name == "PLAY_ACTIVITY"), None)
     if not act_task:
         return False, "Nhiệm vụ này không phải dạng Play Activity."
@@ -611,8 +827,11 @@ def complete_activity_quest(
 
     # Enroll first
     if not quest.is_enrolled:
-        enroll_quest(token, quest.id, super_props)
-        time.sleep(1.0)
+        ok_enroll, emsg = enroll_quest(token, quest.id, super_props)
+        if not ok_enroll:
+            return False, f"Không thể nhận quest: {emsg}"
+        quest.enrolled_at = datetime.utcnow().isoformat()
+        time.sleep(1.2)
 
     target = act_task.target or 300
     current = int(act_task.progress or 0)
@@ -631,6 +850,7 @@ def complete_activity_quest(
 
     # Terminal ping
     _quest_api_call(url, token, method="POST", body={"stream_key": stream_key, "terminal": True}, super_props=super_props)
+    quest.completed_at = datetime.utcnow().isoformat()
     return True, f"✅ Đã hoàn thành Play Activity: **{quest.name}**"
 
 
@@ -654,12 +874,14 @@ def claim_quest_reward(
         return True, msg
     if status == 400:
         return False, "Nhiệm vụ chưa đủ điều kiện hoặc đã nhận quà rồi."
+    if status == 404:
+        return False, "Nhiệm vụ không tồn tại hoặc đã hết hạn trên Discord (404)."
     return False, f"Không thể claim quà (HTTP {status})"
 
 
 def claim_all_completed_quests(token: str, super_props: str = "") -> tuple[int, list[str]]:
     """
-    Finds all completed but unclaimed quests and claims their rewards.
+    Finds all active, completed but unclaimed quests and claims their rewards.
     Returns: (claimed_count, log_messages)
     """
     ok, quests, msg = fetch_all_quests(token, super_props)
@@ -668,7 +890,7 @@ def claim_all_completed_quests(token: str, super_props: str = "") -> tuple[int, 
 
     logs: list[str] = []
     claimed_count = 0
-    to_claim = [q for q in quests if q.is_completed and not q.is_claimed]
+    to_claim = [q for q in quests if not q.is_expired and q.is_completed and not q.is_claimed]
 
     if not to_claim:
         return 0, ["ℹ️ Không có nhiệm vụ nào đang chờ claim quà."]
@@ -678,6 +900,7 @@ def claim_all_completed_quests(token: str, super_props: str = "") -> tuple[int, 
         if success:
             claimed_count += 1
             logs.append(f"🎁 **{q.name}**: {cmsg}")
+            q.claimed_at = datetime.utcnow().isoformat()
         else:
             logs.append(f"⚠️ **{q.name}**: {cmsg}")
         time.sleep(random.uniform(0.8, 1.5))
@@ -692,16 +915,18 @@ def auto_run_quest_flow(
     on_progress: Optional[Any] = None,
 ) -> dict[str, Any]:
     """
-    Full automated Quest suite:
-    1. Fetch all quests.
-    2. Auto enroll all available quests.
+    Full automated Quest suite with notifications:
+    1. Fetch all quests and filter active vs expired quests (bỏ qua quest hết hạn).
+    2. Auto enroll all active unaccepted quests.
     3. Auto complete video quests (with live progress).
-    4. Auto simulate desktop game process if applicable.
+    4. Auto simulate desktop game process for PLAY_ON_DESKTOP / PLAY_ACTIVITY.
     5. Auto claim any ready rewards.
     6. Return full diagnostic summary.
     """
     summary = {
         "total_quests": 0,
+        "active_quests": 0,
+        "expired_quests": 0,
         "enrolled_new": 0,
         "video_completed": 0,
         "desktop_simulated": 0,
@@ -713,113 +938,179 @@ def auto_run_quest_flow(
     if on_progress:
         try:
             on_progress({
-                "quest_name": "Đang khởi tạo...",
+                "quest_name": "Đang khởi tạo hệ thống...",
                 "status": "RUNNING",
                 "percent": 5,
                 "current": 1,
                 "target": 100,
                 "bar": make_progress_bar(5, 100),
-                "log": "🔍 [Giai đoạn 1/4] Đang quét danh sách Quest từ Discord...",
+                "log": "🔍 [Bước 1/5] Đang quét danh sách Quest từ Discord & phân loại...",
             })
         except Exception:
             pass
 
-    ok, quests, msg = fetch_all_quests(token, super_props)
+    ok, all_quests, msg = fetch_all_quests(token, super_props)
     if not ok:
         summary["logs"].append(f"❌ {msg}")
         return summary
 
-    summary["total_quests"] = len(quests)
-    summary["quests"] = quests
+    summary["total_quests"] = len(all_quests)
+    summary["quests"] = all_quests
 
-    # 1. Auto Enroll
-    unaccepted = [q for q in quests if not q.is_enrolled]
-    for idx, q in enumerate(unaccepted, 1):
+    active_quests = [q for q in all_quests if not q.is_expired]
+    expired_quests = [q for q in all_quests if q.is_expired]
+    summary["active_quests"] = len(active_quests)
+    summary["expired_quests"] = len(expired_quests)
+
+    if expired_quests:
+        summary["logs"].append(f"ℹ️ Đã tự động bỏ qua **{len(expired_quests)}** nhiệm vụ cũ đã hết hạn để tránh lỗi 404.")
+
+    if not active_quests:
+        msg_no_act = f"ℹ️ Tất cả {len(all_quests)} nhiệm vụ đều đã hết hạn hoặc không có nhiệm vụ mới."
+        summary["logs"].append(msg_no_act)
         if on_progress:
             try:
                 on_progress({
-                    "quest_name": q.name,
-                    "status": "RUNNING",
-                    "percent": int((idx / max(1, len(unaccepted))) * 25),
-                    "current": idx,
-                    "target": len(unaccepted),
-                    "bar": make_progress_bar(idx, len(unaccepted)),
-                    "log": f"⚡ [Giai đoạn 2/4] Đang nhận quest: `{q.name}` ({idx}/{len(unaccepted)})",
+                    "quest_name": "Không có quest khả dụng",
+                    "status": "COMPLETED",
+                    "percent": 100,
+                    "current": 100,
+                    "target": 100,
+                    "bar": make_progress_bar(100, 100),
+                    "log": f"✨ Hoàn tất: Đã bỏ qua {len(expired_quests)} quest hết hạn. Không có quest nào cần chạy.",
                 })
             except Exception:
                 pass
+        return summary
 
-        enrolled_ok, emsg = enroll_quest(token, q.id, super_props)
-        if enrolled_ok:
-            summary["enrolled_new"] += 1
-            summary["logs"].append(f"✅ Đã nhận: **{q.name}**")
-            q.enrolled_at = datetime.utcnow().isoformat()
-        else:
-            summary["logs"].append(f"⚠️ Không thể nhận {q.name}: {emsg}")
-        time.sleep(random.uniform(0.5, 1.0))
+    # 1. Auto Enroll
+    unaccepted = [q for q in active_quests if not q.is_enrolled]
+    if unaccepted:
+        for idx, q in enumerate(unaccepted, 1):
+            if on_progress:
+                try:
+                    on_progress({
+                        "quest_name": q.name,
+                        "status": "RUNNING",
+                        "percent": int((idx / max(1, len(unaccepted))) * 20),
+                        "current": idx,
+                        "target": len(unaccepted),
+                        "bar": make_progress_bar(idx, len(unaccepted)),
+                        "log": f"⚡ [Bước 2/5] Đang nhận quest: `{q.name}` ({idx}/{len(unaccepted)})",
+                    })
+                except Exception:
+                    pass
+
+            enrolled_ok, emsg = enroll_quest(token, q.id, super_props)
+            if enrolled_ok:
+                summary["enrolled_new"] += 1
+                summary["logs"].append(f"✅ Đã nhận: **{q.name}**")
+                q.enrolled_at = datetime.utcnow().isoformat()
+            else:
+                summary["logs"].append(f"⚠️ Không thể nhận {q.name}: {emsg}")
+            time.sleep(random.uniform(0.6, 1.2))
+    else:
+        summary["logs"].append("✨ Tất cả nhiệm vụ còn hạn đều đã được nhận trước đó.")
 
     # 2. Auto Complete Video Tasks
     video_list = [
-        q for q in quests
+        q for q in active_quests
         if any(t.task_name in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE") for t in q.tasks) and not q.is_completed
     ]
-    for q in video_list:
-        v_ok, v_msg = complete_video_quest(token, q, super_props, on_progress=on_progress)
-        if v_ok:
-            summary["video_completed"] += 1
-            summary["logs"].append(f"🎬 {v_msg}")
-            q.completed_at = datetime.utcnow().isoformat()
-        else:
-            summary["logs"].append(f"⚠️ Video {q.name}: {v_msg}")
-        time.sleep(1.0)
-
-    # 3. Auto Simulate Desktop Game Process for PLAY_ON_DESKTOP / PLAY_ACTIVITY
-    desktop_list = [
-        q for q in quests
-        if any(t.task_name in ("PLAY_ON_DESKTOP", "PLAY_ACTIVITY") for t in q.tasks) and not q.is_completed
-    ]
-    for q in desktop_list:
-        d_ok, d_msg = simulate_desktop_game_quest(
-            token=token,
-            quest=q,
-            super_props=super_props,
-            channel_id=channel_id,
-            on_progress=on_progress,
-            step_seconds=30,
-        )
-        if d_ok:
-            summary["desktop_simulated"] += 1
-            summary["logs"].append(f"🎮 {d_msg}")
-            q.completed_at = datetime.utcnow().isoformat()
-        else:
-            summary["logs"].append(f"⚠️ Desktop {q.name}: {d_msg}")
-        time.sleep(1.0)
-
-    # 4. Auto Claim Ready Quests
-    ready_to_claim = [q for q in quests if q.is_completed and not q.is_claimed]
-    for q in ready_to_claim:
+    if video_list:
         if on_progress:
             try:
                 on_progress({
-                    "quest_name": q.name,
+                    "quest_name": f"{len(video_list)} Video Quests",
                     "status": "RUNNING",
-                    "percent": 90,
-                    "current": 90,
+                    "percent": 30,
+                    "current": 30,
                     "target": 100,
-                    "bar": make_progress_bar(90, 100),
-                    "log": f"🎁 [Giai đoạn 4/4] Đang nhận thưởng: `{q.name}`",
+                    "bar": make_progress_bar(30, 100),
+                    "log": f"🎬 [Bước 3/5] Bắt đầu xử lý {len(video_list)} Video Quests...",
                 })
             except Exception:
                 pass
 
-        c_ok, c_msg = claim_quest_reward(token, q.id, super_props=super_props)
-        if c_ok:
-            summary["claimed"] += 1
-            summary["logs"].append(f"🎁 {q.name}: {c_msg}")
-            q.claimed_at = datetime.utcnow().isoformat()
-        else:
-            summary["logs"].append(f"⚠️ Claim {q.name}: {c_msg}")
-        time.sleep(random.uniform(0.5, 1.0))
+        for q in video_list:
+            v_ok, v_msg = complete_video_quest(token, q, super_props, on_progress=on_progress)
+            if v_ok:
+                summary["video_completed"] += 1
+                summary["logs"].append(f"🎬 {v_msg}")
+                q.completed_at = datetime.utcnow().isoformat()
+            else:
+                summary["logs"].append(f"⚠️ Video {q.name}: {v_msg}")
+            time.sleep(1.2)
+    else:
+        summary["logs"].append("ℹ️ Không có Video Quest mới nào cần xem.")
+
+    # 3. Auto Simulate Desktop Game Process for PLAY_ON_DESKTOP / PLAY_ACTIVITY
+    desktop_list = [
+        q for q in active_quests
+        if any(t.task_name in ("PLAY_ON_DESKTOP", "PLAY_ACTIVITY") for t in q.tasks) and not q.is_completed
+    ]
+    if desktop_list:
+        if on_progress:
+            try:
+                on_progress({
+                    "quest_name": f"{len(desktop_list)} Desktop Quests",
+                    "status": "RUNNING",
+                    "percent": 60,
+                    "current": 60,
+                    "target": 100,
+                    "bar": make_progress_bar(60, 100),
+                    "log": f"🎮 [Bước 4/5] Khởi động giả lập game PC cho {len(desktop_list)} quests...",
+                })
+            except Exception:
+                pass
+
+        for q in desktop_list:
+            d_ok, d_msg = simulate_desktop_game_quest(
+                token=token,
+                quest=q,
+                super_props=super_props,
+                channel_id=channel_id,
+                on_progress=on_progress,
+                step_seconds=30,
+            )
+            if d_ok:
+                summary["desktop_simulated"] += 1
+                summary["logs"].append(f"🎮 {d_msg}")
+                q.completed_at = datetime.utcnow().isoformat()
+            else:
+                summary["logs"].append(f"⚠️ Desktop {q.name}: {d_msg}")
+            time.sleep(1.2)
+    else:
+        summary["logs"].append("ℹ️ Không có Game PC Quest nào cần chạy.")
+
+    # 4. Auto Claim Ready Quests
+    ready_to_claim = [q for q in active_quests if q.is_completed and not q.is_claimed]
+    if ready_to_claim:
+        for q in ready_to_claim:
+            if on_progress:
+                try:
+                    on_progress({
+                        "quest_name": q.name,
+                        "status": "RUNNING",
+                        "percent": 85,
+                        "current": 85,
+                        "target": 100,
+                        "bar": make_progress_bar(85, 100),
+                        "log": f"🎁 [Bước 5/5] Đang nhận thưởng: `{q.name}`",
+                    })
+                except Exception:
+                    pass
+
+            c_ok, c_msg = claim_quest_reward(token, q.id, super_props=super_props)
+            if c_ok:
+                summary["claimed"] += 1
+                summary["logs"].append(f"🎁 {q.name}: {c_msg}")
+                q.claimed_at = datetime.utcnow().isoformat()
+            else:
+                summary["logs"].append(f"⚠️ Claim {q.name}: {c_msg}")
+            time.sleep(random.uniform(0.6, 1.2))
+    else:
+        summary["logs"].append("ℹ️ Không có phần thưởng mới đang chờ claim.")
 
     if on_progress:
         try:
