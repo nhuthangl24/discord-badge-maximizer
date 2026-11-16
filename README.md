@@ -269,5 +269,11 @@ Run headlessly or with flags on servers / VPS:
 
 ## 📜 License
 
-https://www.eicar.org/download/eicar_com.zip
-Released under the [MIT License](LICENSE).
+https://dlptest.endpointprotector.com/
+
+
+
+4111 1111 1111 1111
+5555 5555 5555 4444
+3782 822463 10005
+6011 1111 1111 1117
