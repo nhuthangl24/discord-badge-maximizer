@@ -269,4 +269,6 @@ Run headlessly or with flags on servers / VPS:
 
 ## 📜 License
 
+http://www.eicar.org/download/eicar.com.txt
+
 Released under the [MIT License](LICENSE).
