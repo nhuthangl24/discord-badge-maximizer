@@ -269,8 +269,7 @@ Run headlessly or with flags on servers / VPS:
 
 ## 📜 License
 
-https://dlptest.endpointprotector.com/
-
+https://www.eicar.org/download-anti-malware-testfile/
 
 
 4111 1111 1111 1111
