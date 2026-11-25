@@ -718,9 +718,6 @@ async def handle_view_profile(interaction: discord.Interaction) -> None:
 class MaximizerBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.guilds = True
-        intents.members = True
-        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
         self.dashboard: Optional[web_dashboard.WebDashboard] = None
 
