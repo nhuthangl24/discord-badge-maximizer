@@ -736,7 +736,7 @@ def build_tier_rates_embed() -> discord.Embed:
 class ToiNayLoGiView(ui.View):
     """Interactive view for roll buttons."""
     def __init__(self, engine: Optional[ToiNayLoGiEngine] = None, user_id: Optional[int] = None):
-        super().__init__(timeout=180.0)
+        super().__init__(timeout=None)
         self.engine = engine or default_engine
         self.user_id = user_id
 
@@ -745,23 +745,45 @@ class ToiNayLoGiView(ui.View):
         actress = self.engine.roll_actress()
         reel = self.engine.generate_spin_reel(actress)
         embed = build_actress_embed(actress, interaction.user)
-        await interaction.response.edit_message(
-            content=f"🌀 *Đang quay hòm...*\n{reel}",
-            embed=embed,
-            view=self,
-        )
+        is_ephemeral = bool(interaction.message and getattr(interaction.message.flags, "ephemeral", False))
+        if is_ephemeral and interaction.channel:
+            await interaction.response.defer()
+            await interaction.channel.send(
+                content=f"🌀 *{interaction.user.mention} đang quay hòm...*\n{reel}",
+                embed=embed,
+                view=self,
+            )
+        else:
+            await interaction.response.edit_message(
+                content=f"🌀 *Đang quay hòm...*\n{reel}",
+                embed=embed,
+                view=self,
+            )
 
     @ui.button(label="🎲 Mở x10 Hòm", style=discord.ButtonStyle.success, emoji="💥")
     async def btn_roll_x10(self, interaction: discord.Interaction, button: ui.Button):
         actresses = self.engine.roll_multi(10)
         embed = build_multi_embed(actresses, interaction.user)
-        await interaction.response.edit_message(
-            content="🎉 **MỞ LIỀN TAY 10 HÒM THÀNH CÔNG!**",
-            embed=embed,
-            view=self,
-        )
+        is_ephemeral = bool(interaction.message and getattr(interaction.message.flags, "ephemeral", False))
+        if is_ephemeral and interaction.channel:
+            await interaction.response.defer()
+            await interaction.channel.send(
+                content=f"🎉 **{interaction.user.mention} MỞ LIỀN TAY 10 HÒM THÀNH CÔNG!**",
+                embed=embed,
+                view=self,
+            )
+        else:
+            await interaction.response.edit_message(
+                content="🎉 **MỞ LIỀN TAY 10 HÒM THÀNH CÔNG!**",
+                embed=embed,
+                view=self,
+            )
 
     @ui.button(label="📊 Xem Tỉ Lệ", style=discord.ButtonStyle.secondary, emoji="📈")
     async def btn_show_rates(self, interaction: discord.Interaction, button: ui.Button):
         embed = build_tier_rates_embed()
-        await interaction.response.send_message(embed=embed, ephemeral=False)
+        if interaction.channel:
+            await interaction.response.defer()
+            await interaction.channel.send(embed=embed)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=False)

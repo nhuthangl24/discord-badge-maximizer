@@ -421,7 +421,20 @@ class ControlPanelView(ui.View):
         reel = toinaylogi.default_engine.generate_spin_reel(actress)
         embed = toinaylogi.build_actress_embed(actress, interaction.user)
         view = toinaylogi.ToiNayLoGiView(user_id=interaction.user.id)
-        await interaction.response.send_message(content=f"🌀 *Đang quay hòm...*\n{reel}", embed=embed, view=view, ephemeral=False)
+        if interaction.channel:
+            await interaction.response.defer()
+            await interaction.channel.send(
+                content=f"🌀 *{interaction.user.mention} đang mở hòm...*\n{reel}",
+                embed=embed,
+                view=view,
+            )
+        else:
+            await interaction.response.send_message(
+                content=f"🌀 *Đang quay hòm...*\n{reel}",
+                embed=embed,
+                view=view,
+                ephemeral=False,
+            )
 
     @ui.button(label="⚙️ Cài Đặt Token", style=discord.ButtonStyle.secondary, row=1, emoji="🔑", custom_id="panel_btn_setup")
     async def btn_setup(self, interaction: discord.Interaction, button: ui.Button):
