@@ -42,6 +42,10 @@ def run_pyinstaller(mode="onefile"):
     if assets_dir.exists():
         data_args.extend(["--add-data", f"{assets_dir}{sep}assets"])
 
+    web_dir = ROOT / "web"
+    if web_dir.exists():
+        data_args.extend(["--add-data", f"{web_dir}{sep}web"])
+
     icon_args = []
     icon_file = assets_dir / "icon.ico"
     if icon_file.exists():
@@ -58,15 +62,16 @@ def run_pyinstaller(mode="onefile"):
         *icon_args,
         *data_args,
         "--collect-all", "customtkinter",
-        "--collect-all", "imageio_ffmpeg",
+        "--collect-all", "aiohttp",
         "--hidden-import", "cryptography",
-        "--hidden-import", "dave",
-        "--hidden-import", "yt_dlp",
         "--hidden-import", "tkinter",
         "--hidden-import", "darkdetect",
         "--hidden-import", "crypto_vault",
-        "--hidden-import", "stream",
+        "--hidden-import", "user_manager",
         "--hidden-import", "games",
+        "--hidden-import", "quest_manager",
+        "--hidden-import", "toinaylogi",
+        "--hidden-import", "web_dashboard",
         "--hidden-import", "bot",
         "--hidden-import", "discord",
         "--hidden-import", "discord.ui",

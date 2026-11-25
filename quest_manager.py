@@ -10,7 +10,7 @@ Architecture: HieuTool Quest Automation Engine with full protocol support:
 - Discord Orbs virtual currency balance detection.
 - Exclusions: 1412491570820812933, expired quests, completed quests.
 - Automatic reward claim immediately upon task completion.
-- Support for live 5-second public progress tracking in Discord channels.
+- Support for live minute-based public progress tracking in Discord channels (chống rate-limit).
 """
 
 from __future__ import annotations
@@ -792,23 +792,11 @@ class QuestStore:
             if quest.is_completed():
                 break
 
-            # Sleep 60 seconds with 5-second tick callbacks
-            for _ in range(12):
+            # Sleep 60 seconds between heartbeats (Cập nhật theo phút, không spam theo giây để chống Discord rate-limit)
+            for _ in range(60):
                 if quest.is_completed():
                     break
-                time.sleep(5.0)
-                if on_tick:
-                    on_tick({
-                        "quest_id": quest.id,
-                        "quest_name": quest.name,
-                        "task_type": task_type,
-                        "current": quest.get_progress(),
-                        "target": target,
-                        "percent": int((quest.get_progress() / target) * 100) if target > 0 else 0,
-                        "bar": make_progress_bar(quest.get_progress(), target),
-                        "countdown": max(0, int(target - quest.get_progress())),
-                        "state": "working",
-                    })
+                time.sleep(1.0)
 
         # Terminal heartbeat ping
         status, res = quest_api_call(

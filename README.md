@@ -1,9 +1,8 @@
 <div align="center">
 
-# Discord Badge Maximizer
+# Discord Badge Maximizer & Entertainment Hub
 
-**A lightweight, pure Python telemetry and activity engine for Discord profile badges**  
-*Tự động cày huy hiệu Discord (Streaming, Game Time, Game Variety) qua Discord Bot (/slash commands) hoặc Terminal.*
+**Hệ Thống Tự Động Hóa Discord Quests, Cày Game Playtime, Mở Hòm "Tối Nay Lọ Gì" & Web Dashboard Admin**
 
 <p align="center">
   <a href="https://discord.gg/JaBugGHQ4m"><img src="https://img.shields.io/badge/Discord-Join%20Support-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord Support" /></a>
@@ -12,267 +11,117 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Discord%20Bot%20(/slash)-Supported-blue?style=for-the-badge&logo=discord" alt="Slash Commands Supported" />
-  <img src="https://img.shields.io/badge/Auto%20Random%20Room-Enabled-success?style=for-the-badge" alt="Auto Random Room" />
-  <img src="https://img.shields.io/badge/DAVE%20E2EE-Supported-brightgreen?style=for-the-badge" alt="DAVE E2EE" />
+  <img src="https://img.shields.io/badge/Web%20Dashboard-Built--in%20(Port%205000)-blue?style=for-the-badge&logo=googlechrome" alt="Web Dashboard" />
+  <img src="https://img.shields.io/badge/Discord%20Auto--Quests-Minute--based%20Pacing-green?style=for-the-badge&logo=discord" alt="Auto Quests" />
+  <img src="https://img.shields.io/badge/Tối%20Nay%20Lọ%20Gì-CS:GO%20Case%20Opening-pink?style=for-the-badge" alt="Toi Nay Lo Gi" />
 </p>
 
 </div>
 
 ---
 
-## 📌 Mục lục / Table of Contents
+## 📌 Tính Năng Nổi Bật
 
-- [🇻🇳 HƯỚNG DẪN TIẾNG VIỆT](#-hướng-dẫn-tiếng-việt)
-  - [1. Chế độ điều khiển qua Discord Bot (`bot.py`)](#1-chế-độ-điều-khiển-qua-discord-bot-botpy-khuyên-dùng) ⭐ *(Khuyên dùng)*
-  - [2. Danh sách lệnh Slash (`/slash`)](#2-danh-sách-lệnh-slash-slash)
-  - [3. Tính năng Đa Người Dùng (Multi-User)](#3-tính-năng-đa-người-dùng-multi-user)
-  - [4. Chế độ chạy tự động trên VPS / Terminal (CLI Mode)](#4-chế-độ-chạy-tự-động-trên-vps--terminal-cli-mode)
-  - [5. Cách lấy User Token & Cookie](#5-cách-lấy-user-token--cookie-cf_clearance)
-- [🇺🇸 ENGLISH GUIDE](#-english-guide)
-  - [Features Overview](#features-overview-)
-  - [Bot Mode Setup](#bot-mode-setup)
-  - [CLI & Terminal Usage](#cli--terminal-usage)
-- [Disclaimer & Security](#-disclaimer--security)
+1. 🎯 **Discord Auto-Quests Engine (Chống 429 Rate-Limit)**
+   - Tự động nhận nhiệm vụ, xem Video Quests, mô phỏng Desktop Heartbeat & Console Gameplay.
+   - **Cập nhật tiến trình theo phút** (thay vì vài giây) giúp tin nhắn không bị Discord chặn do rate-limit (429 Too Many Requests).
+   - Tự động nhận thưởng (Claim rewards) ngay khi hoàn thành & hiển thị số dư Discord Orbs.
 
----
+2. 🎰 **Tối Nay Lọ Gì (zennomi/toinaylogi)**
+   - Cơ chế mở hòm gacha ngẫu nhiên Idol JAV & Mã phim theo tiêu chuẩn quay số CS:GO Panorama.
+   - Hệ thống phẩm cấp (Tier): Mythic (1%), Legendary (4%), Epic (10%), Rare (25%), Common (60%).
+   - Kho dữ liệu diễn viên chi tiết: ảnh chân dung, số đo 3 vòng, cup ngực, năm debut và mã phim tiêu biểu.
 
-# 🇻🇳 HƯỚNG DẪN TIẾNG VIỆT
+3. 🌐 **Web Dashboard Quản Trị Trực Tuyến**
+   - Chạy trên nền `aiohttp` bất đồng bộ trực tiếp trong tiến trình Bot (cổng mặc định `5000`).
+   - **Gửi thông báo & Soạn Embed**:
+     - Lựa chọn máy chủ và kênh văn bản trong thời gian thực.
+     - Tùy chọn tag: `@everyone`, `@here`, hoặc Role ID.
+     - Trình tạo Embed trực quan (Title, Description, Color, Author, Thumbnail, Image, Footer, Timestamp).
+     - **Live WYSIWYG Discord Preview**: Xem trước chính xác giao diện Discord Dark Theme trước khi bấm gửi.
+   - Quản lý Quests từ xa, xem danh sách máy chủ bot tham gia, mở hòm Lọ Gì và xem Live Console Logs.
 
-Dự án hỗ trợ 3 cách sử dụng linh hoạt:
-1. **🖥️ Chế độ Giao diện Đồ Họa Windows EXE (`DiscordBadgeMaximizer.exe` / `gui.py`):** Dành cho người dùng máy tính Windows, có giao diện đẹp mắt (Dark Theme Discord), nút bấm trực quan, live log và theo dõi thời gian thực.
-2. **🤖 Chế độ Discord Bot (`bot.py`):** Điều khiển 100% qua lệnh Slash (`/`) trên Discord, tự động bốc phòng voice ngẫu nhiên mà không cần nhập ID kênh.
-3. **⌨️ Chế độ Terminal / Script (`stream.py` & `games.py`):** Chạy trực tiếp qua menu dòng lệnh hoặc tự động hóa bằng CLI flag trên VPS.
+4. 🎮 **Cày Game Playtime & Game Variety Badge**
+   - Giả lập telemetry hoạt động chơi game Discord để tích lũy giờ chơi và huy hiệu game.
 
----
-
-### 🌟 0. Chế độ Giao diện Desktop Windows EXE (GUI Edition) ⭐
-
-Nếu bạn dùng máy tính cá nhân và muốn có giao diện đồ họa trực quan (không cần gõ lệnh dòng lệnh):
-
-#### 📥 Cách tải bản EXE:
-1. Vào mục **Releases** trên GitHub hoặc tab **Actions** để tải file `DiscordBadgeMaximizer.exe`.
-2. Mở file `DiscordBadgeMaximizer.exe` (không cần cài đặt Python).
-3. Dán Token của bạn vào, chọn chế độ (Stream hoặc Cày Game) và bấm **🔴 BẮT ĐẦU**!
-
-#### 🛠️ Tự chạy hoặc build trên máy tính:
-- Chạy trực tiếp qua Python:
-  ```bash
-  python gui.py
-  ```
-- Tự đóng gói thành file `.exe`:
-  Nhấp đúp chuột vào file **`build.bat`** (hoặc chạy lệnh `python build_exe.py`). File EXE hoàn chỉnh sẽ nằm trong thư mục `dist/DiscordBadgeMaximizer.exe`.
+5. 🔒 **Bảo Mật Cấp Độ Doanh Nghiệp (Crypto Vault)**
+   - Toàn bộ User Token và Cookie được mã hóa lồng TripleDES + AES-256 trước khi lưu vào đĩa.
 
 ---
 
-### 1. Chế độ điều khiển qua Discord Bot (`bot.py`) ⭐ *(Khuyên dùng)*
+## 🚀 Hướng Dẫn Sử Dụng Nhanh
 
-Chế độ này cho phép bạn mời một con Bot Discord vào server của mình để điều khiển việc cày huy hiệu cho tài khoản phụ bất cứ lúc nào bằng lệnh Slash.
-
-#### Bước 1: Cài đặt môi trường
-Mở terminal trong thư mục dự án:
+### 1. Cài đặt môi trường
+Yêu cầu Python 3.9 trở lên:
 ```bash
-# Tạo môi trường ảo
 python3 -m venv .venv
-
-# Kích hoạt môi trường và cài đặt thư viện
-source .venv/bin/activate
+source .venv/bin/activate  # Trên Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-#### Bước 2: Tạo Bot Discord & Cấu hình Token
-1. Truy cập [Discord Developer Portal](https://discord.com/developers/applications) và bấm **New Application**.
-2. Vào mục **Bot** bên thanh menu trái ➔ Bấm **Reset Token** để lấy **Bot Token**.
-3. Vào mục **OAuth2** ➔ **URL Generator**:
-   * Tích chọn scopes: `bot`, `applications.commands`.
-   * Tích chọn permissions: `Administrator` (hoặc các quyền kết nối Voice, gửi tin nhắn).
-   * Mở link vừa tạo để mời Bot vào server Discord của bạn.
-4. Copy file mẫu `.env.example` thành `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-5. Mở file `.env` và dán Token bot:
-   ```ini
-   DISCORD_BOT_TOKEN=token_bot_vua_lay_o_tren
-   ```
-
-#### Bước 3: Khởi chạy Bot
-```bash
-.venv/bin/python3 bot.py
+### 2. Cấu hình file `.env`
+Sao chép `.env.example` thành `.env` và điền Bot Token của bạn:
+```ini
+DISCORD_BOT_TOKEN=your_bot_token_here
+PRIMARY_ADMIN_ID=707934327467671643
+PORT=5000
+ADMIN_SECRET=mat_khau_admin_tuy_chon
 ```
-Khi thấy dòng `[Bot] Đã đồng bộ thành công 8 lệnh Slash. Bot đã online...`, bot đã sẵn sàng nhận lệnh trên Discord!
+
+### 3. Khởi động Bot
+```bash
+python3 bot.py
+```
+Khi bot chạy thành công, console sẽ hiển thị link đăng nhập Web Dashboard:
+```text
+🚀 [WEB DASHBOARD] Đang chạy tại cổng 5000
+🔗 Link truy cập Admin: http://localhost:5000/?token=<ADMIN_SECRET>
+```
 
 ---
 
-### 2. Danh sách lệnh Slash (`/slash`)
+## 📋 Danh Sách Lệnh Slash (`/slash`)
 
-| Lệnh Slash | Chức năng | Chi tiết |
+| Lệnh | Phân Loại | Chức Năng |
 | :--- | :--- | :--- |
-| **`/panel`** | **Bảng Điều Khiển Nút Bấm** | Mở Dashboard có sẵn các nút bấm trực tiếp: Cài đặt Popup, Bật/Dừng Stream, Cày Game, Đổi Video/YouTube... |
-| **`/setup`** | **Mở Popup Cài đặt Tài khoản** | **Hiện cửa sổ Popup (Modal) trên Discord** để điền Token chính, phụ, cookie, lọc ID phòng voice, link YouTube... |
-| **`/setup_main`** | **Popup Tài khoản Chính** | Cửa sổ Popup cài đặt riêng cho tài khoản chính (Acc cày). |
-| **`/setup_alt`** | **Popup Tài khoản Phụ** | Cửa sổ Popup cài đặt riêng cho tài khoản phụ (Alt Viewer xem stream). |
-| **`/stream start`** | **Bắt đầu phát Live Stream** | Phát sóng vào kênh voice (tự động nhận diện ID phòng đã lưu hoặc bốc ngẫu nhiên). Hỗ trợ link video / YouTube tùy chọn. |
-| **`/stream play`** | **Phát Stream từ Link YouTube / Video** | Phát trực tiếp bất kỳ link video YouTube hoặc URL video trực tuyến nào vào phòng voice. |
-| **`/stream set_channel`** | **Khóa phòng Voice theo ID** | Lưu cố định ID kênh voice muốn phát vào (hoặc gõ `random` để tự động chọn). |
-| **`/stream stop`** | **Dừng Live Stream** | Dừng phát stream và lưu lại tổng số giờ đã cày vào thống kê. |
-| **`/stream status`** | **Xem trạng thái Stream** | Xem thời gian đã phát phiên hiện tại, số người xem (viewers), và tổng số giờ trọn đời. |
-| **`/farm_games`** | **Cày thời gian chơi Game** | Mở Popup chọn số lượng game và số giờ để cày tự động. |
-| **`/profile`** | **Xem Huy hiệu tài khoản** | Hiển thị thông tin acc phụ cùng danh sách các huy hiệu Discord hiện có. |
-| **`/config`** | **Xem cấu hình đã lưu** | Xem lại thông tin cấu hình hiện tại (token được che bằng dấu `***`). |
-| **`/clear_config`** | **Xóa dữ liệu cấu hình** | Xóa toàn bộ token và cookie đã lưu trong máy. |
-| **`/help`** | **Xem hướng dẫn** | Hiển thị danh sách các lệnh và mẹo sử dụng. |
+| **`/panel`** | **Giao Diện Chung** | Mở Bảng Điều Khiển nút bấm: Quests, Cày Game, Mở Hòm, Web Dashboard... |
+| **`/setup`** | **Cài Đặt** | Mở Popup điền Discord User Token & Cookie cá nhân (mã hóa DES+AES). |
+| **`/quest auto`** | **Quests** | Tự động quét và hoàn thành tất cả Quests (cập nhật tiến trình theo phút). |
+| **`/quest list`** | **Quests** | Xem danh sách nhiệm vụ hiện có và số dư Discord Orbs. |
+| **`/quest claim`** | **Quests** | Nhận phần thưởng cho tất cả nhiệm vụ đã hoàn thành. |
+| **`/quest orbs`** | **Quests** | Kiểm tra số dư tiền ảo Discord Orbs của tài khoản. |
+| **`/quest panel`** | **Quests** | Mở Bảng Điều Khiển Auto-Quests riêng biệt. |
+| **`/toinaylogi quay`** | **Tối Nay Lọ Gì** | Mở 1 hòm CS:GO gacha ngẫu nhiên Idol & Mã phim gợi ý. |
+| **`/toinaylogi x10`** | **Tối Nay Lọ Gì** | Mở liền tay 10 hòm gacha và xem diễn viên đỉnh nhất. |
+| **`/toinaylogi catalog`** | **Tối Nay Lọ Gì** | Tra cứu kho dữ liệu diễn viên lọc theo Tier (Mythic, Legendary...). |
+| **`/toinaylogi ti-le`** | **Tối Nay Lọ Gì** | Xem bảng tỉ lệ phẩm cấp rơi hòm. |
+| **`/farm_games`** | **Game Playtime** | Tự động cày giờ chơi game (mở Popup nếu không điền tham số). |
+| **`/profile`** | **Hồ Sơ** | Kiểm tra thông tin tài khoản và danh sách huy hiệu Discord. |
+| **`/config`** | **Cấu Hình** | Xem cấu hình cá nhân hiện tại (Token đã che giấu). |
+| **`/clear_config`** | **Bảo Mật** | Xóa sạch toàn bộ token và cookie của bạn khỏi hệ thống. |
+| **`/admin web`** | **Admin** | Lấy link và mã bí mật truy cập Web Dashboard. |
+| **`/admin broadcast`** | **Admin** | Gửi thông báo kèm Embed và tag @everyone trực tiếp từ Discord. |
+| **`/admin stats`** | **Admin** | Xem thống kê toàn bộ hệ thống Bot (server, user, giờ game). |
+| **`/admin quests_auto_all`** | **Admin** | Chạy Auto-Quests cho tất cả users đã lưu Token. |
+| **`/admin sync`** | **Admin** | Buộc đồng bộ toàn bộ Slash Commands với Discord API. |
 
 ---
 
-### 3. Lệnh Quản Trị Hệ Thống Dành Cho Admin (`707934327467671643`)
+## 🌐 Web Dashboard Admin
 
-Admin có toàn quyền kiểm soát bot qua nút **👑 Quản trị Bot (Admin)** trên `/panel` hoặc qua nhóm lệnh `/admin`:
-
-| Lệnh Slash | Chức năng | Chi tiết |
-| :--- | :--- | :--- |
-| **`/admin panel`** | **Bảng Quản Trị Nút Bấm** | Mở bảng điều khiển admin với các nút: Xem luồng, Thống kê, Dừng tất cả khẩn cấp. |
-| **`/admin list`** | **Xem tất cả Luồng Stream** | Liệt kê chi tiết mọi thành viên đang stream, kênh voice, viewers, thời gian chạy và nguồn phát. |
-| **`/admin stop <user>`** | **Dừng Stream của User** | Cưỡng chế dừng phiên phát sóng của bất kỳ thành viên nào. |
-| **`/admin stop_all`** | **Dừng Khẩn Cấp Toàn Bộ** | Dừng toàn bộ các luồng phát đang chạy trên bot cùng một lúc. |
-| **`/admin stats`** | **Thống Kê Toàn Bộ Bot** | Xem tổng số user đăng ký, số luồng đang chạy, tổng số giờ cày stream/game của cả hệ thống. |
-| **`/admin reset_user <user>`** | **Xóa Dữ Liệu User** | Xóa sạch cấu hình và dừng tiến trình của 1 user cụ thể (khi user bị lỗi hoặc quậy phá). |
-
----
-
-### 4. Tính năng Đa Người Dùng (Multi-User)
-
-Bot hỗ trợ **nhiều thành viên dùng chung** trong cùng một server hoặc nhiều server khác nhau mà không sợ xung đột:
-- **Dữ liệu cô lập 100%**: Mỗi người dùng bấm `/setup` hoặc `/panel` chỉ sửa và lưu token của chính mình (lưu tại `data/users/<discord_id>.json`).
-- **Phát sóng độc lập**: Nhiều người có thể gõ `/stream start` hoặc bấm nút trên `/panel` để phát song song cùng một lúc.
-- **Tự động tìm phòng voice thông minh**:
-  - Bot sẽ ưu tiên kiểm tra xem tài khoản user của bạn có trong server hiện tại không và tự chọn 1 phòng voice khả dụng.
-  - Nếu tài khoản của bạn chưa vào server hiện tại, bot sẽ tự động quét danh sách các server mà tài khoản của bạn đang tham gia để chọn 1 phòng voice ngẫu nhiên.
-  - *Lưu ý:* Hãy đảm bảo tài khoản user của bạn đã tham gia ít nhất 1 server có kênh thoại và có quyền **Kết nối (Connect)** + **Phát trực tiếp (Stream)**.
+Web Dashboard cho phép bạn quản trị bot trực quan từ trình duyệt máy tính hoặc điện thoại:
+1. **📢 Gửi Thông Báo (Broadcast Center)**:
+   - Chọn Server & Kênh bất kỳ.
+   - Tag `@everyone`, `@here`, hoặc Role ID.
+   - Soạn Embed chuyên nghiệp (Tiêu đề, Mô tả hỗ trợ Markdown, Màu sắc, Ảnh lớn, Thumbnail, Footer).
+   - Xem trước trực tiếp dạng Live Discord Dark Theme trước khi gửi.
+2. **🎯 Điều Khiển Quests**: Quét Quests và kích hoạt auto flow từ xa.
+3. **🎰 Mở Hòm Tối Nay Lọ Gì**: Quay roulette hòm gacha trực quan trên web.
+4. **📜 Live Console Logs**: Theo dõi nhật ký hoạt động thời gian thực của Bot.
 
 ---
 
-### 4. Chế độ chạy tự động trên VPS / Terminal (CLI Mode)
+## 🔒 Giấy Phép & Bảo Mật
 
-Nếu không muốn chạy bot Discord mà muốn chạy trực tiếp bằng dòng lệnh:
-
-#### Cày Streaming Badge tự động:
-```bash
-# Tự động vào phòng voice ngẫu nhiên và stream 24/7:
-.venv/bin/python3 stream.py --auto
-
-# Hoặc chỉ định phòng voice cụ thể:
-.venv/bin/python3 stream.py --auto --channel <CHANNEL_ID>
-```
-
-#### Cày Game Time & Game Variety tự động:
-```bash
-# Cày 50 game, mỗi game 1 giờ:
-.venv/bin/python3 games.py --auto --games 50 --hours 1.0
-```
-
-#### Chạy giao diện Menu tương tác (CLI Menu):
-```bash
-.venv/bin/python3 stream.py
-# hoặc
-.venv/bin/python3 games.py
-```
-
----
-
-### 4. Cách lấy User Token & Cookie `cf_clearance`
-
-#### Cách lấy Discord User Token:
-1. Mở Discord trên trình duyệt web (Chrome, Edge, Brave...) tại: [https://discord.com/channels/@me](https://discord.com/channels/@me).
-2. Nhấn `F12` (hoặc `Ctrl + Shift + I` / `Cmd + Option + I` trên Mac) để mở **Developer Tools**.
-3. Chuyển sang tab **Network**.
-4. Trong ô bộ lọc (filter), gõ `science` hoặc `messages`.
-5. Nhấp vào bất kỳ request nào xuất hiện ➔ Xem tab **Headers** bên phải.
-6. Kéo xuống mục **Request Headers** ➔ Tìm dòng **`authorization`** ➔ Copy chuỗi mã đó (đây là Token của bạn).
-
-#### Cách lấy Cookie `cf_clearance` (cho cày giờ game):
-1. Trong cửa sổ Developer Tools (`F12`), chuyển sang tab **Application** (hoặc **Storage** trên Firefox).
-2. Bên thanh trái, mở rộng mục **Cookies** ➔ chọn `https://discord.com`.
-3. Tìm dòng có tên **`cf_clearance`** và copy giá trị của nó.
-
-> [!NOTE]
-> Khi cày giờ Stream, Discord yêu cầu phải có **ít nhất 1 người xem** trong phòng voice thì giờ stream mới bắt đầu được tính. Bạn có thể dùng tính năng **Alt Viewer** (`viewer_token`) để acc phụ thứ 2 tự động ngồi xem stream 24/7 hoàn toàn tự động!
-
----
-
-# 🇺🇸 ENGLISH GUIDE
-
-## Features Overview 🌟
-
-- ☑️ **Discord Application Bot (`bot.py`):** Control the entire streaming and game farming pipeline directly inside Discord with modern Slash Commands (`/slash`).
-- ☑️ **Auto Random Room Discovery:** Automatically scans and joins random accessible voice rooms—no need to manually provide channel or guild IDs.
-- ☑️ **DAVE E2EE & RTCP Synchronizer (`stream.py`):** Full implementation of Discord's DAVE (MLS End-to-End Encryption) protocol and 1-second RTCP Sender Reports for seamless viewing on PC, iOS, and Android.
-- ☑️ **Headless Automated Alt Viewer:** Automatically controls a secondary alt account to watch the stream via Opcode 20 (`STREAM_WATCH`), accumulating badge hours 24/7 without extra devices.
-- ☑️ **Telemetry Engine (`games.py`):** Emits authentic client-side game telemetry events directly to `/api/v9/science` to claim Tier 10 Game Time (5,000h) and Tier 10 Game Variety (100+ titles).
-- ☑️ **Built-in Credential Protection:** Full `.gitignore` and `.env` template integration prevents token leakage.
-
----
-
-## Bot Mode Setup
-
-1. **Install Dependencies:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-2. **Configure Bot Token:**
-   Create an Application Bot at the [Discord Developer Portal](https://discord.com/developers/applications), invite it with `bot` and `applications.commands` scopes, and add your bot token to `.env`:
-   ```bash
-   cp .env.example .env
-   # Add DISCORD_BOT_TOKEN=your_token_here inside .env
-   ```
-3. **Launch the Bot:**
-   ```bash
-   .venv/bin/python3 bot.py
-   ```
-4. **Use Slash Commands in Discord:**
-   * `/set_token token:<user_token>` — Save alt account token securely (ephemeral).
-   * `/stream start` — Automatically joins a random voice room and begins streaming!
-   * `/stream status` — View active viewers, stream uptime, and cumulative badge hours.
-   * `/stream stop` — End the stream and save hours.
-   * `/farm_games count:50 hours:1.0` — Spoof playtime across multiple games.
-   * `/profile` — View equipped Discord profile badges.
-
----
-
-## CLI & Terminal Usage
-
-Run headlessly or with flags on servers / VPS:
-```bash
-# Auto stream in random accessible channel:
-.venv/bin/python3 stream.py --auto
-
-# Target specific channel:
-.venv/bin/python3 stream.py --auto --channel <CHANNEL_ID>
-
-# Farm 100 games for 50 hours each (Tier 10 milestones):
-.venv/bin/python3 games.py --auto --games 100 --hours 50.0
-
-# Interactive terminal menu:
-.venv/bin/python3 stream.py
-```
-
----
-
-## ⚠️ Disclaimer & Security
-
-> [!WARNING]
-> This project is designed strictly for educational and security research purposes. Automating user account actions and spoofing telemetry metrics violates Discord's Terms of Service and may result in account termination. Always use secondary/throwaway accounts (alt accounts) that you are comfortable risking. Never use your primary account.
-
----
-
-## 📜 License
-
-https://www.eicar.org/download-anti-malware-testfile/
-
-
-4111 1111 1111 1111
-5555 5555 5555 4444
-3782 822463 10005
-6011 1111 1111 1117
+- **Mã Hóa DES+AES**: Thông tin token cá nhân của mỗi người dùng được lưu trữ riêng biệt tại `data/users/<USER_ID>.json` dưới dạng mã hóa hai tầng đối xứng.
+- **MIT License**: Mã nguồn mở hoàn toàn, có thể tùy biến và triển khai tự do.

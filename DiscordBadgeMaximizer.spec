@@ -1,17 +1,37 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
+from pathlib import Path
 
-datas = [('/Users/nhuthang/Desktop/discord-badge-maximizer/assets/video.mp4', 'assets')]
+ROOT = Path.cwd()
+
+datas = [('web', 'web')]
+if (ROOT / 'assets').exists():
+    datas.append(('assets', 'assets'))
+
 binaries = []
-hiddenimports = ['cryptography', 'dave', 'yt_dlp', 'tkinter', 'darkdetect', 'crypto_vault', 'stream', 'games']
+hiddenimports = [
+    'cryptography',
+    'crypto_vault',
+    'user_manager',
+    'games',
+    'quest_manager',
+    'toinaylogi',
+    'web_dashboard',
+    'aiohttp',
+    'tkinter',
+    'darkdetect',
+    'discord',
+    'discord.ui',
+    'discord.app_commands',
+    'bot',
+]
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('imageio_ffmpeg')
+tmp_ret = collect_all('aiohttp')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
-
 a = Analysis(
-    ['/Users/nhuthang/Desktop/discord-badge-maximizer/gui.py'],
+    ['gui.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

@@ -1,0 +1,1735 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord Bot Master Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #111215;
+      --bg-surface: #1e1f22;
+      --bg-card: #2b2d31;
+      --bg-card-hover: #35373c;
+      --bg-input: #383a40;
+      --border-subtle: #3f4147;
+      --text-normal: #dbdee1;
+      --text-muted: #949ba4;
+      --text-header: #f2f3f5;
+      --blurple: #5865f2;
+      --blurple-hover: #4752c4;
+      --green: #57f287;
+      --yellow: #fee75c;
+      --red: #ed4245;
+      --pink: #eb459e;
+      --mythic: #ff1493;
+      --legendary: #fee75c;
+      --epic: #9b59b6;
+      --rare: #3498db;
+      --common: #95a5a6;
+      --font-main: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-normal);
+      font-family: var(--font-main);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 260px;
+      background-color: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .brand {
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #5865f2, #eb459e);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      box-shadow: 0 4px 12px rgba(88, 101, 242, 0.4);
+    }
+
+    .brand-text h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-header);
+    }
+
+    .brand-text span {
+      font-size: 11px;
+      color: var(--green);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .brand-text span::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      background: var(--green);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--green);
+    }
+
+    .nav-menu {
+      padding: 16px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+
+    .nav-item:hover {
+      background-color: var(--bg-card);
+      color: var(--text-header);
+    }
+
+    .nav-item.active {
+      background-color: rgba(88, 101, 242, 0.15);
+      border-color: rgba(88, 101, 242, 0.4);
+      color: #fff;
+    }
+
+    .nav-item .icon {
+      font-size: 17px;
+      width: 22px;
+      text-align: center;
+    }
+
+    .sidebar-footer {
+      padding: 14px 16px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: rgba(0,0,0,0.2);
+    }
+
+    .admin-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .admin-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #4752c4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      color: #fff;
+    }
+
+    .admin-info {
+      line-height: 1.2;
+    }
+    .admin-info .name {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-header);
+    }
+    .admin-info .role {
+      font-size: 10px;
+      color: var(--yellow);
+      font-weight: 600;
+    }
+
+    /* Main Container */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      background-color: var(--bg-base);
+    }
+
+    .topbar {
+      height: 64px;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .topbar-title h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-header);
+    }
+    .topbar-title p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-pill {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-pill .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+
+    /* Views */
+    .tab-view {
+      display: none;
+      padding: 28px;
+    }
+    .tab-view.active {
+      display: block;
+    }
+
+    /* Grid layout */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+
+    /* Cards */
+    .card {
+      background-color: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px;
+      padding: 20px;
+      position: relative;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-header);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .stat-number {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--text-header);
+      letter-spacing: -0.5px;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      font-weight: 500;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 9px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s ease;
+      font-family: var(--font-main);
+    }
+    .btn-primary {
+      background-color: var(--blurple);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background-color: var(--blurple-hover);
+    }
+    .btn-success {
+      background-color: var(--green);
+      color: #0b2413;
+    }
+    .btn-success:hover {
+      filter: brightness(1.1);
+    }
+    .btn-danger {
+      background-color: var(--red);
+      color: #fff;
+    }
+    .btn-danger:hover {
+      filter: brightness(1.1);
+    }
+    .btn-secondary {
+      background-color: var(--bg-card);
+      color: var(--text-normal);
+      border: 1px solid var(--border-subtle);
+    }
+    .btn-secondary:hover {
+      background-color: var(--bg-card-hover);
+      color: var(--text-header);
+    }
+
+    /* Form inputs */
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-header);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .form-control {
+      width: 100%;
+      background-color: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text-header);
+      font-size: 13.5px;
+      font-family: var(--font-main);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-control:focus {
+      border-color: var(--blurple);
+    }
+    textarea.form-control {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    select.form-control {
+      cursor: pointer;
+    }
+
+    /* Color picker buttons */
+    .color-presets {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .color-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: transform 0.15s;
+    }
+    .color-dot:hover {
+      transform: scale(1.15);
+    }
+    .color-dot.active {
+      border-color: #fff;
+    }
+
+    /* Tag Selector Options */
+    .tag-options {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .tag-chip {
+      padding: 6px 12px;
+      border-radius: 6px;
+      background-color: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s;
+    }
+    .tag-chip:hover {
+      border-color: var(--blurple);
+    }
+    .tag-chip.active {
+      background-color: rgba(88, 101, 242, 0.25);
+      border-color: var(--blurple);
+      color: #fff;
+    }
+
+    /* Discord Embed Live Preview */
+    .discord-preview-container {
+      background-color: #313338;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    .discord-msg-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .discord-msg-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--blurple);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #fff;
+      overflow: hidden;
+    }
+    .discord-msg-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .discord-msg-meta {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .discord-msg-author {
+      font-weight: 600;
+      font-size: 14.5px;
+      color: #f2f3f5;
+    }
+    .discord-msg-botbadge {
+      background-color: var(--blurple);
+      color: #fff;
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 3px;
+      text-transform: uppercase;
+    }
+    .discord-msg-timestamp {
+      font-size: 11px;
+      color: #949ba4;
+    }
+
+    .discord-mention-tag {
+      color: #c9cdfb;
+      background-color: rgba(88, 101, 242, 0.3);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-weight: 500;
+      font-size: 14px;
+      display: inline-block;
+      margin-bottom: 8px;
+    }
+
+    /* Embed box */
+    .discord-embed {
+      border-left: 4px solid var(--blurple);
+      background-color: #2b2d31;
+      border-radius: 4px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-width: 520px;
+    }
+    .discord-embed-author {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #f2f3f5;
+    }
+    .discord-embed-author img {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+    }
+    .discord-embed-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #00a8fc;
+      text-decoration: none;
+    }
+    .discord-embed-desc {
+      font-size: 13.5px;
+      color: #dbdee1;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .discord-embed-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .discord-embed-field {
+      font-size: 12.5px;
+    }
+    .discord-embed-field-title {
+      font-weight: 700;
+      color: #f2f3f5;
+      margin-bottom: 2px;
+    }
+    .discord-embed-field-value {
+      color: #dbdee1;
+    }
+    .discord-embed-image {
+      margin-top: 6px;
+      border-radius: 6px;
+      max-width: 100%;
+      max-height: 240px;
+      object-fit: cover;
+    }
+    .discord-embed-thumb {
+      max-width: 80px;
+      max-height: 80px;
+      border-radius: 6px;
+      float: right;
+      margin-left: 10px;
+      object-fit: cover;
+    }
+    .discord-embed-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: #949ba4;
+      margin-top: 6px;
+    }
+
+    /* Console logs */
+    .terminal-box {
+      background-color: #0d0e11;
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      height: 480px;
+      overflow-y: auto;
+      padding: 16px;
+      color: #d1d5db;
+      line-height: 1.6;
+    }
+    .log-line {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    .log-time { color: #6b7280; font-size: 11px; }
+    .log-badge { padding: 0 4px; border-radius: 3px; font-weight: 700; font-size: 10px; }
+    .log-badge.INFO { background: rgba(88, 101, 242, 0.2); color: #5865f2; }
+    .log-badge.WARN { background: rgba(254, 231, 92, 0.2); color: #fee75c; }
+    .log-badge.ERROR { background: rgba(237, 66, 69, 0.2); color: #ed4245; }
+    .log-badge.SUCCESS { background: rgba(87, 242, 135, 0.2); color: #57f287; }
+
+    /* Case Opening Roulette UI */
+    .roulette-container {
+      background: radial-gradient(circle at center, #1e1f26 0%, #111215 100%);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      padding: 30px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .roulette-reel {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px 0;
+      position: relative;
+      overflow: hidden;
+      min-height: 220px;
+    }
+    .roulette-needle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 4px;
+      background: var(--yellow);
+      box-shadow: 0 0 14px var(--yellow);
+      z-index: 5;
+    }
+    .roulette-card {
+      width: 140px;
+      background-color: var(--bg-card);
+      border: 2px solid var(--common);
+      border-radius: 12px;
+      padding: 14px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      transition: all 0.3s;
+    }
+    .roulette-card.tier-4 { border-color: var(--mythic); box-shadow: 0 0 16px rgba(255, 20, 147, 0.4); }
+    .roulette-card.tier-3 { border-color: var(--legendary); box-shadow: 0 0 16px rgba(254, 231, 92, 0.4); }
+    .roulette-card.tier-2 { border-color: var(--epic); box-shadow: 0 0 16px rgba(155, 89, 182, 0.4); }
+    .roulette-card.tier-1 { border-color: var(--rare); box-shadow: 0 0 16px rgba(52, 152, 219, 0.4); }
+    .roulette-card.tier-0 { border-color: var(--common); }
+    .roulette-card img {
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+    .roulette-card .name {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-header);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 120px;
+    }
+    .roulette-card .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.08);
+    }
+
+    /* Winner Modal */
+    .winner-spotlight {
+      background: linear-gradient(135deg, rgba(255,20,147,0.1), rgba(88,101,242,0.1));
+      border: 2px solid var(--mythic);
+      border-radius: 16px;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      margin-top: 20px;
+      text-align: left;
+    }
+    .winner-avatar {
+      width: 100px;
+      height: 100px;
+      border-radius: 14px;
+      object-fit: cover;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+
+    /* Server cards */
+    .guild-card {
+      background-color: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      transition: all 0.2s;
+    }
+    .guild-card:hover {
+      background-color: var(--bg-card);
+      border-color: var(--blurple);
+    }
+    .guild-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: var(--bg-input);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .guild-icon img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .guild-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .guild-name {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: var(--text-header);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .guild-members {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Toast */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .toast {
+      padding: 12px 20px;
+      border-radius: 8px;
+      background: #1e1f22;
+      border: 1px solid var(--border-subtle);
+      color: #fff;
+      font-size: 13.5px;
+      font-weight: 600;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      animation: slideIn 0.25s ease;
+    }
+    .toast.success { border-color: var(--green); }
+    .toast.error { border-color: var(--red); }
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px;
+      padding: 24px;
+      max-width: 440px;
+      width: 90%;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div class="brand-text">
+        <h2>MAXIMIZER HUB</h2>
+        <span id="bot-status-indicator">Đang kết nối...</span>
+      </div>
+    </div>
+
+    <nav class="nav-menu">
+      <div class="nav-item active" data-tab="tab-overview">
+        <span class="icon">📊</span>
+        <span>Tổng Quan</span>
+      </div>
+      <div class="nav-item" data-tab="tab-broadcast">
+        <span class="icon">📢</span>
+        <span>Gửi Thông Báo & Tag All</span>
+      </div>
+      <div class="nav-item" data-tab="tab-quests">
+        <span class="icon">🎯</span>
+        <span>Quản Lý Auto-Quests</span>
+      </div>
+      <div class="nav-item" data-tab="tab-games">
+        <span class="icon">🎮</span>
+        <span>Cày Giờ Chơi Game</span>
+      </div>
+      <div class="nav-item" data-tab="tab-toinaylogi">
+        <span class="icon">🎰</span>
+        <span>Tối Nay Lọ Gì</span>
+      </div>
+      <div class="nav-item" data-tab="tab-servers">
+        <span class="icon">🛡️</span>
+        <span>Quản Lý Servers</span>
+      </div>
+      <div class="nav-item" data-tab="tab-logs">
+        <span class="icon">📜</span>
+        <span>Nhật Ký Console</span>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="admin-badge">
+        <div class="admin-avatar">AD</div>
+        <div class="admin-info">
+          <div class="name">Administrator</div>
+          <div class="role">Toàn quyền kiểm soát</div>
+        </div>
+      </div>
+      <button class="btn btn-secondary" onclick="logout()" title="Đăng xuất" style="padding: 6px 10px;">🔒</button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="view-title">Tổng Quan Hệ Thống</h1>
+        <p id="view-desc">Thống kê trạng thái và điều khiển Discord Bot trực tiếp</p>
+      </div>
+      <div class="topbar-actions">
+        <div class="status-pill">
+          <div class="dot"></div>
+          <span id="top-ping">Ping: -- ms</span>
+        </div>
+        <button class="btn btn-secondary" onclick="syncCommands()" title="Đồng bộ Slash Commands">🔄 Đồng Bộ Slash</button>
+      </div>
+    </header>
+
+    <!-- Tab 1: Tổng Quan -->
+    <section id="tab-overview" class="tab-view active">
+      <div class="grid-4" style="margin-bottom: 24px;">
+        <div class="card">
+          <div class="card-title">🌐 Máy Chủ (Guilds)</div>
+          <div class="stat-number" id="stat-guilds">0</div>
+          <div class="stat-label">Tổng server bot đã tham gia</div>
+        </div>
+        <div class="card">
+          <div class="card-title">👥 Người Dùng</div>
+          <div class="stat-number" id="stat-users">0</div>
+          <div class="stat-label">Tổng thành viên tiếp cận</div>
+        </div>
+        <div class="card">
+          <div class="card-title">🎯 Quests Đang Chạy</div>
+          <div class="stat-number" id="stat-quests">0</div>
+          <div class="stat-label">Phiên cày quest hoạt động</div>
+        </div>
+        <div class="card">
+          <div class="card-title">⏱️ Uptime Bot</div>
+          <div class="stat-number" id="stat-uptime">0h</div>
+          <div class="stat-label">Thời gian online liên tục</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">⚡ Thao Tác Nhanh Admin</div>
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+            Các lệnh cưỡng chế và quản trị bot toàn hệ thống.
+          </p>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button class="btn btn-primary" onclick="switchTab('tab-broadcast')">📢 Gửi Thông Báo Mới</button>
+            <button class="btn btn-secondary" onclick="switchTab('tab-quests')">🎯 Chạy Auto Quests</button>
+            <button class="btn btn-secondary" onclick="switchTab('tab-toinaylogi')">🎰 Mở Hòm Lọ Gì</button>
+            <button class="btn btn-danger" onclick="stopAllTasks()">🛑 Dừng Toàn Bộ Tác Vụ</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">ℹ️ Thông Tin Bot</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13.5px;">
+            <div>Tên bot: <strong id="bot-info-name">Đang tải...</strong></div>
+            <div>Bot ID: <code id="bot-info-id">--</code></div>
+            <div>Chế độ Quests: <strong style="color: var(--green);">Cập nhật theo phút (Chống Rate-limit)</strong></div>
+            <div>Dịch vụ: <strong>Auto Quests & Game Maximizer</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Gửi Thông Báo & Tag All bằng Embed -->
+    <section id="tab-broadcast" class="tab-view">
+      <div class="grid-2">
+        <!-- Form Builder -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">📢 Soạn Thông Báo & Tùy Chỉnh Embed</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">1. Chọn Server (Guild)</label>
+            <select id="bc-guild" class="form-control" onchange="onGuildSelect()">
+              <option value="">-- Chọn Server --</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">2. Chọn Kênh Gửi (Channel)</label>
+            <select id="bc-channel" class="form-control">
+              <option value="">-- Chọn Kênh Văn Bản --</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">3. Chế Độ Tag / Mention</label>
+            <div class="tag-options">
+              <div class="tag-chip active" data-tag="none" onclick="setMention('none')">Không tag</div>
+              <div class="tag-chip" data-tag="everyone" onclick="setMention('everyone')">@everyone</div>
+              <div class="tag-chip" data-tag="here" onclick="setMention('here')">@here</div>
+              <div class="tag-chip" data-tag="role" onclick="setMention('role')">Role tùy chọn</div>
+            </div>
+            <input type="text" id="bc-custom-role" class="form-control" placeholder="Dán ID Role cần tag vào đây..." style="display: none; margin-top: 8px;">
+          </div>
+
+          <hr style="border-color: var(--border-subtle); margin: 20px 0;">
+
+          <div class="form-group">
+            <label class="form-label">Tiêu Đề Embed (Title)</label>
+            <input type="text" id="bc-title" class="form-control" placeholder="Ví dụ: 📢 THÔNG BÁO QUAN TRỌNG TỪ BAN QUẢN TRỊ" oninput="updateEmbedPreview()">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Nội Dung Embed (Description - Hỗ trợ Markdown)</label>
+            <textarea id="bc-desc" class="form-control" rows="4" placeholder="Nhập nội dung thông báo... Hỗ trợ in đậm **text**, in nghiêng *text*, gạch đầu dòng..." oninput="updateEmbedPreview()"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Màu Sắc Embed</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <input type="color" id="bc-color" value="#5865f2" style="width: 44px; height: 38px; border: none; border-radius: 6px; cursor: pointer;" oninput="updateEmbedPreview()">
+              <input type="text" id="bc-color-hex" class="form-control" value="#5865f2" style="width: 110px;" oninput="syncColorInput(this.value)">
+              <div class="color-presets">
+                <div class="color-dot" style="background: #5865f2;" onclick="setColor('#5865f2')"></div>
+                <div class="color-dot" style="background: #57f287;" onclick="setColor('#57f287')"></div>
+                <div class="color-dot" style="background: #fee75c;" onclick="setColor('#fee75c')"></div>
+                <div class="color-dot" style="background: #ed4245;" onclick="setColor('#ed4245')"></div>
+                <div class="color-dot" style="background: #eb459e;" onclick="setColor('#eb459e')"></div>
+                <div class="color-dot" style="background: #2b2d31;" onclick="setColor('#2b2d31')"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label">Author Name</label>
+              <input type="text" id="bc-author" class="form-control" placeholder="Tên tác giả / BQT..." oninput="updateEmbedPreview()">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Thumbnail URL</label>
+              <input type="url" id="bc-thumb" class="form-control" placeholder="https://..." oninput="updateEmbedPreview()">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Ảnh Lớn / Banner URL (Image)</label>
+            <input type="url" id="bc-image" class="form-control" placeholder="https://..." oninput="updateEmbedPreview()">
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label">Footer Text</label>
+              <input type="text" id="bc-footer" class="form-control" placeholder="Chân trang thông báo..." oninput="updateEmbedPreview()">
+            </div>
+            <div class="form-group" style="display: flex; align-items: flex-end; padding-bottom: 8px;">
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
+                <input type="checkbox" id="bc-timestamp" checked onchange="updateEmbedPreview()"> Hiển thị mốc thời gian (Timestamp)
+              </label>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" style="width: 100%; padding: 12px; font-size: 15px; font-weight: 700;" onclick="sendAnnouncement()">
+            🚀 Gửi Thông Báo Vào Discord Ngay
+          </button>
+        </div>
+
+        <!-- Live Preview -->
+        <div>
+          <div class="card-title" style="margin-bottom: 12px;">👁️ Xem Trước Trực Tiếp (Live Discord Preview)</div>
+          <div class="discord-preview-container">
+            <div class="discord-msg-header">
+              <div class="discord-msg-avatar" id="prev-avatar">B</div>
+              <div class="discord-msg-meta">
+                <span class="discord-msg-author" id="prev-botname">Bot Name</span>
+                <span class="discord-msg-botbadge">BOT</span>
+                <span class="discord-msg-timestamp">Hôm nay lúc 19:30</span>
+              </div>
+            </div>
+
+            <div id="prev-mention" class="discord-mention-tag" style="display: none;">@everyone</div>
+
+            <div class="discord-embed" id="prev-embed">
+              <div class="discord-embed-author" id="prev-author-wrap" style="display: none;">
+                <span id="prev-author-text">Author</span>
+              </div>
+
+              <img id="prev-thumb-img" class="discord-embed-thumb" style="display: none;">
+
+              <div class="discord-embed-title" id="prev-title">Tiêu đề thông báo</div>
+              <div class="discord-embed-desc" id="prev-desc">Nội dung thông báo sẽ hiển thị ở đây...</div>
+
+              <img id="prev-main-img" class="discord-embed-image" style="display: none;">
+
+              <div class="discord-embed-footer" id="prev-footer-wrap">
+                <span id="prev-footer-text">Hệ thống thông báo tự động</span>
+                <span id="prev-time-text">• Hôm nay lúc 19:30</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Quản Lý Auto-Quests -->
+    <section id="tab-quests" class="tab-view">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🎯 Điều Khiển Discord Auto-Quests</div>
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+            Hệ thống hỗ trợ chạy tự động Video Quests, Desktop Heartbeat, Console Gameplay & tự động nhận thưởng (Claim).
+            <strong>Cập nhật tiến trình theo phút để chống 429 Rate-limit!</strong>
+          </p>
+
+          <div class="form-group">
+            <label class="form-label">Discord User Token</label>
+            <input type="password" id="quest-token" class="form-control" placeholder="Dán User Token cần cày quest vào đây...">
+          </div>
+
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-primary" onclick="scanQuests()">🔍 Quét Quests</button>
+            <button class="btn btn-success" onclick="startAutoQuests()">⚡ Chạy Auto Flow Trọn Gói</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔮 Số Dư Discord Orbs & Tiến Trình</div>
+          </div>
+          <div style="font-size: 24px; font-weight: 800; color: #a855f7; margin-bottom: 12px;" id="orbs-balance">
+            -- Orbs
+          </div>
+          <div id="quest-progress-box" style="background: var(--bg-input); border-radius: 8px; padding: 14px; font-size: 13px; min-height: 120px;">
+            Chưa có tiến trình nào đang chạy. Nhấn <strong>Quét Quests</strong> để bắt đầu.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-header">
+          <div class="card-title">📋 Danh Sách Nhiệm Vụ Đã Quét Được</div>
+        </div>
+        <div id="quest-list-container" style="display: flex; flex-direction: column; gap: 10px;">
+          <div style="color: var(--text-muted); font-size: 13px;">Chưa tải danh sách quests.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: Cày Giờ Chơi Game -->
+    <section id="tab-games" class="tab-view">
+      <div class="card" style="max-width: 600px;">
+        <div class="card-header">
+          <div class="card-title">🎮 Cày Giờ Chơi Game (Game Activity Farming)</div>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+          Tự động giả lập phiên chơi game Discord để tích lũy giờ chơi và huy hiệu game.
+        </p>
+
+        <div class="form-group">
+          <label class="form-label">Discord User Token</label>
+          <input type="password" id="game-token" class="form-control" placeholder="Dán User Token vào đây...">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Số Giờ Cần Cày (Mỗi Game)</label>
+          <input type="number" id="game-hours" class="form-control" value="2.0" min="0.5" max="24" step="0.5">
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-primary" onclick="startGameFarm()">▶️ Bắt Đầu Cày Game</button>
+          <button class="btn btn-danger" onclick="stopGameFarm()">⏹️ Dừng Cày Game</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: Tối Nay Lọ Gì -->
+    <section id="tab-toinaylogi" class="tab-view">
+      <div class="roulette-container">
+        <h2 style="font-size: 22px; font-weight: 800; margin-bottom: 6px;">🎰 TỐI NAY LỌ GÌ?</h2>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;">
+          Mở hòm gacha ngẫu nhiên Idol & Mã phim chuẩn cơ chế CS:GO Panorama từ toinaylogi!
+        </p>
+
+        <div class="roulette-reel" id="roulette-reel">
+          <div class="roulette-needle"></div>
+          <!-- Cards populated by JS -->
+        </div>
+
+        <div style="display: flex; justify-content: center; gap: 12px; margin-top: 20px;">
+          <button class="btn btn-primary" style="padding: 12px 28px; font-size: 15px;" onclick="spinCase()">
+            🎲 Mở 1 Hòm Ngay!
+          </button>
+          <button class="btn btn-success" style="padding: 12px 24px; font-size: 15px;" onclick="spinCase(10)">
+            💥 Mở Liền x10 Hòm
+          </button>
+        </div>
+
+        <div id="winner-spotlight" class="winner-spotlight" style="display: none;">
+          <img id="winner-img" class="winner-avatar" src="" alt="Winner">
+          <div>
+            <div id="winner-tier" style="font-size: 12px; font-weight: 800; text-transform: uppercase;">TIER</div>
+            <h3 id="winner-name" style="font-size: 20px; font-weight: 800; color: #fff; margin: 4px 0;">Tên Diễn Viên</h3>
+            <div style="font-size: 13px; color: var(--text-normal);" id="winner-details">Số đo 3 vòng: -- | Cup: --</div>
+            <div style="font-size: 13px; color: var(--yellow); margin-top: 4px;" id="winner-code">🎬 Mã phim gợi ý: <strong>--</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-header">
+          <div class="card-title">📋 Kho Diễn Viên & Tỉ Lệ Phẩm Cấp</div>
+        </div>
+        <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+          <button class="btn btn-secondary active" onclick="filterTier('all')">Tất Cả</button>
+          <button class="btn btn-secondary" onclick="filterTier(4)">💎 Mythic (1%)</button>
+          <button class="btn btn-secondary" onclick="filterTier(3)">👑 Legendary (4%)</button>
+          <button class="btn btn-secondary" onclick="filterTier(2)">⭐ Epic (10%)</button>
+          <button class="btn btn-secondary" onclick="filterTier(1)">🔹 Rare (25%)</button>
+          <button class="btn btn-secondary" onclick="filterTier(0)">⚪ Common (60%)</button>
+        </div>
+        <div id="actress-catalog" class="grid-3">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 6: Quản Lý Servers -->
+    <section id="tab-servers" class="tab-view">
+      <div class="card-header" style="margin-bottom: 16px;">
+        <div class="card-title">🛡️ Danh Sách Máy Chủ Discord Bot Đang Tham Gia</div>
+      </div>
+      <div id="servers-grid" class="grid-3">
+        <!-- Server cards populated by JS -->
+      </div>
+    </section>
+
+    <!-- Tab 7: Nhật Ký Console -->
+    <section id="tab-logs" class="tab-view">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📜 Nhật Ký Hoạt Động Thời Gian Thực (Live Console Logs)</div>
+          <button class="btn btn-secondary" onclick="clearLogsUI()">🧹 Xóa Màn Hình</button>
+        </div>
+        <div class="terminal-box" id="terminal-logs">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Login Modal -->
+  <div class="modal-overlay" id="login-modal">
+    <div class="modal-box">
+      <h2 style="font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 8px;">🔐 Xác Thực Admin Web UI</h2>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;">
+        Vui lòng nhập Mã Bí Mật Quản Trị (Admin Secret Token) để truy cập bảng điều khiển.
+      </p>
+      <div class="form-group">
+        <label class="form-label">Mã Bí Mật (Admin Token)</label>
+        <input type="password" id="login-token" class="form-control" placeholder="Dán Admin Token vào đây...">
+      </div>
+      <button class="btn btn-primary" style="width: 100%; padding: 12px;" onclick="doLogin()">
+        Đăng Nhập Dashboard
+      </button>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script>
+    // State
+    let authToken = localStorage.getItem('bot_admin_token') || '';
+    let currentMention = 'none';
+    let guildsData = [];
+    let actressesData = [];
+
+    // Check token from URL query params (e.g. ?token=...)
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('token')) {
+      authToken = urlParams.get('token');
+      localStorage.setItem('bot_admin_token', authToken);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    // Initialize
+    window.addEventListener('DOMContentLoaded', () => {
+      setupNavigation();
+      checkAuth();
+      setInterval(pollStats, 5000);
+      setInterval(pollLogs, 3000);
+    });
+
+    // Navigation Tabs
+    function setupNavigation() {
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const tabId = item.getAttribute('data-tab');
+          switchTab(tabId);
+        });
+      });
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-view').forEach(el => el.classList.remove('active'));
+
+      const navEl = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
+      if (navEl) navEl.classList.add('active');
+
+      const tabEl = document.getElementById(tabId);
+      if (tabEl) tabEl.classList.add('active');
+
+      // Update Header title
+      const titles = {
+        'tab-overview': ['Tổng Quan Hệ Thống', 'Thống kê trạng thái và điều khiển Discord Bot trực tiếp'],
+        'tab-broadcast': ['Gửi Thông Báo & Embed Builder', 'Tùy chỉnh Embed và gửi thông báo, tag all đến bất kỳ kênh nào'],
+        'tab-quests': ['Quản Lý Auto-Quests', 'Quét và tự động hoàn thành nhiệm vụ Discord Quests (cập nhật theo phút)'],
+        'tab-games': ['Cày Giờ Chơi Game', 'Tích lũy giờ chơi game và danh hiệu trên Discord'],
+        'tab-toinaylogi': ['Tối Nay Lọ Gì', 'Mở hòm gacha ngẫu nhiên Idol & Mã phim chuẩn CS:GO'],
+        'tab-servers': ['Quản Lý Máy Chủ', 'Danh sách tất cả máy chủ mà bot đang phục vụ'],
+        'tab-logs': ['Nhật Ký Console', 'Luồng log trực tiếp từ Discord Bot engine'],
+      };
+
+      if (titles[tabId]) {
+        document.getElementById('view-title').innerText = titles[tabId][0];
+        document.getElementById('view-desc').innerText = titles[tabId][1];
+      }
+
+      if (tabId === 'tab-broadcast' && guildsData.length === 0) {
+        fetchGuilds();
+      }
+      if (tabId === 'tab-toinaylogi' && actressesData.length === 0) {
+        fetchActresses();
+      }
+      if (tabId === 'tab-servers') {
+        renderServers();
+      }
+    }
+
+    // Auth
+    async function checkAuth() {
+      if (!authToken) {
+        document.getElementById('login-modal').classList.add('active');
+        return;
+      }
+      try {
+        const res = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (!res.ok) {
+          localStorage.removeItem('bot_admin_token');
+          authToken = '';
+          document.getElementById('login-modal').classList.add('active');
+        } else {
+          document.getElementById('login-modal').classList.remove('active');
+          pollStats();
+          fetchGuilds();
+          fetchActresses();
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function doLogin() {
+      const val = document.getElementById('login-token').value.trim();
+      if (!val) return showToast('Vui lòng nhập Token!', 'error');
+      authToken = val;
+      localStorage.setItem('bot_admin_token', authToken);
+      checkAuth();
+    }
+
+    function logout() {
+      localStorage.removeItem('bot_admin_token');
+      authToken = '';
+      document.getElementById('login-modal').classList.add('active');
+    }
+
+    // Stats
+    async function pollStats() {
+      if (!authToken) return;
+      try {
+        const res = await fetch('/api/stats', { credentials: 'include', headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('stat-guilds').innerText = data.guild_count || 0;
+        document.getElementById('stat-users').innerText = (data.user_count || 0).toLocaleString();
+        document.getElementById('stat-quests').innerText = data.active_quests || 0;
+        document.getElementById('stat-uptime').innerText = data.uptime || '0h';
+        document.getElementById('top-ping').innerText = `Ping: ${data.latency_ms || 0} ms`;
+        document.getElementById('bot-info-name').innerText = data.bot_name || 'Discord Bot';
+        document.getElementById('bot-info-id').innerText = data.bot_id || '--';
+        document.getElementById('bot-status-indicator').innerText = '🟢 Đang hoạt động';
+        document.getElementById('prev-botname').innerText = data.bot_name || 'Bot Name';
+      } catch (e) {}
+    }
+
+    // Guilds & Channels
+    async function fetchGuilds() {
+      if (!authToken) return;
+      try {
+        const res = await fetch('/api/guilds', { credentials: 'include', headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (!res.ok) return;
+        guildsData = await res.json();
+        const sel = document.getElementById('bc-guild');
+        sel.innerHTML = '<option value="">-- Chọn Server --</option>';
+        guildsData.forEach(g => {
+          sel.innerHTML += `<option value="${g.id}">${g.name} (${g.member_count} members)</option>`;
+        });
+        renderServers();
+      } catch (e) {}
+    }
+
+    async function onGuildSelect() {
+      const gid = document.getElementById('bc-guild').value;
+      const chanSel = document.getElementById('bc-channel');
+      chanSel.innerHTML = '<option value="">-- Đang tải kênh... --</option>';
+      if (!gid) return;
+
+      try {
+        const res = await fetch(`/api/guilds/${gid}/channels`, { credentials: 'include', headers: { 'Authorization': `Bearer ${authToken}` } });
+        const channels = await res.json();
+        chanSel.innerHTML = '<option value="">-- Chọn Kênh Văn Bản --</option>';
+        channels.forEach(c => {
+          chanSel.innerHTML += `<option value="${c.id}"># ${c.name}</option>`;
+        });
+      } catch (e) {
+        chanSel.innerHTML = '<option value="">Lỗi tải kênh</option>';
+      }
+    }
+
+    function renderServers() {
+      const box = document.getElementById('servers-grid');
+      if (!box) return;
+      if (guildsData.length === 0) {
+        box.innerHTML = '<div style="color: var(--text-muted)">Không tìm thấy máy chủ nào.</div>';
+        return;
+      }
+      box.innerHTML = guildsData.map(g => `
+        <div class="guild-card">
+          <div class="guild-icon">
+            ${g.icon_url ? `<img src="${g.icon_url}">` : g.name.substring(0, 2)}
+          </div>
+          <div class="guild-info">
+            <div class="guild-name">${g.name}</div>
+            <div class="guild-members">👥 ${g.member_count} thành viên · ID: ${g.id}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Mentions & Embed Preview
+    function setMention(type) {
+      currentMention = type;
+      document.querySelectorAll('.tag-chip').forEach(el => el.classList.remove('active'));
+      const chip = document.querySelector(`.tag-chip[data-tag="${type}"]`);
+      if (chip) chip.classList.add('active');
+
+      const customRoleInput = document.getElementById('bc-custom-role');
+      customRoleInput.style.display = type === 'role' ? 'block' : 'none';
+
+      updateEmbedPreview();
+    }
+
+    function setColor(hex) {
+      document.getElementById('bc-color').value = hex;
+      document.getElementById('bc-color-hex').value = hex;
+      updateEmbedPreview();
+    }
+
+    function syncColorInput(hex) {
+      if (/^#[0-9A-F]{6}$/i.test(hex)) {
+        document.getElementById('bc-color').value = hex;
+        updateEmbedPreview();
+      }
+    }
+
+    function updateEmbedPreview() {
+      const title = document.getElementById('bc-title').value.trim();
+      const desc = document.getElementById('bc-desc').value.trim();
+      const color = document.getElementById('bc-color').value;
+      const author = document.getElementById('bc-author').value.trim();
+      const thumb = document.getElementById('bc-thumb').value.trim();
+      const image = document.getElementById('bc-image').value.trim();
+      const footer = document.getElementById('bc-footer').value.trim();
+      const showTime = document.getElementById('bc-timestamp').checked;
+
+      // Mentions preview
+      const mentionEl = document.getElementById('prev-mention');
+      if (currentMention === 'everyone') {
+        mentionEl.innerText = '@everyone';
+        mentionEl.style.display = 'inline-block';
+      } else if (currentMention === 'here') {
+        mentionEl.innerText = '@here';
+        mentionEl.style.display = 'inline-block';
+      } else if (currentMention === 'role') {
+        const r = document.getElementById('bc-custom-role').value.trim();
+        mentionEl.innerText = r ? `@&${r}` : '@Role';
+        mentionEl.style.display = 'inline-block';
+      } else {
+        mentionEl.style.display = 'none';
+      }
+
+      // Embed elements
+      const embedEl = document.getElementById('prev-embed');
+      embedEl.style.borderLeftColor = color;
+
+      document.getElementById('prev-title').innerText = title || 'Tiêu đề thông báo';
+      document.getElementById('prev-desc').innerText = desc || 'Nội dung thông báo sẽ hiển thị ở đây...';
+
+      const authWrap = document.getElementById('prev-author-wrap');
+      if (author) {
+        authWrap.style.display = 'flex';
+        document.getElementById('prev-author-text').innerText = author;
+      } else {
+        authWrap.style.display = 'none';
+      }
+
+      const thumbImg = document.getElementById('prev-thumb-img');
+      if (thumb) {
+        thumbImg.src = thumb;
+        thumbImg.style.display = 'block';
+      } else {
+        thumbImg.style.display = 'none';
+      }
+
+      const mainImg = document.getElementById('prev-main-img');
+      if (image) {
+        mainImg.src = image;
+        mainImg.style.display = 'block';
+      } else {
+        mainImg.style.display = 'none';
+      }
+
+      document.getElementById('prev-footer-text').innerText = footer || 'Hệ thống thông báo tự động';
+      document.getElementById('prev-time-text').style.display = showTime ? 'inline' : 'none';
+    }
+
+    // Send Announcement
+    async function sendAnnouncement() {
+      const guild_id = document.getElementById('bc-guild').value;
+      const channel_id = document.getElementById('bc-channel').value;
+      if (!guild_id || !channel_id) {
+        return showToast('Vui lòng chọn Server và Kênh cần gửi!', 'error');
+      }
+
+      const title = document.getElementById('bc-title').value.trim();
+      const description = document.getElementById('bc-desc').value.trim();
+      if (!title && !description) {
+        return showToast('Vui lòng nhập tiêu đề hoặc nội dung thông báo!', 'error');
+      }
+
+      const payload = {
+        guild_id,
+        channel_id,
+        mention: currentMention,
+        custom_mention: document.getElementById('bc-custom-role').value.trim(),
+        embed: {
+          title,
+          description,
+          color: document.getElementById('bc-color').value,
+          author: { name: document.getElementById('bc-author').value.trim() },
+          thumbnail: document.getElementById('bc-thumb').value.trim(),
+          image: document.getElementById('bc-image').value.trim(),
+          footer: { text: document.getElementById('bc-footer').value.trim() },
+          timestamp: document.getElementById('bc-timestamp').checked
+        }
+      };
+
+      try {
+        const res = await fetch('/api/broadcast', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('✅ Đã gửi thông báo vào Discord thành công!', 'success');
+        } else {
+          showToast(`❌ Lỗi: ${data.detail || 'Không thể gửi'}`, 'error');
+        }
+      } catch (err) {
+        showToast('❌ Lỗi kết nối khi gửi thông báo!', 'error');
+      }
+    }
+
+    // Quests actions
+    async function scanQuests() {
+      const token = document.getElementById('quest-token').value.trim();
+      if (!token) return showToast('Vui lòng nhập Discord Token!', 'error');
+
+      showToast('Đang quét danh sách Quests...', 'info');
+      try {
+        const res = await fetch('/api/quests/scan', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+          body: JSON.stringify({ token })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail);
+
+        document.getElementById('orbs-balance').innerText = `${(data.orbs || 0).toLocaleString()} Orbs`;
+        const listEl = document.getElementById('quest-list-container');
+        if (!data.quests || data.quests.length === 0) {
+          listEl.innerHTML = '<div style="color: var(--text-muted)">Không có nhiệm vụ nào khả dụng hoặc token sai.</div>';
+          return;
+        }
+
+        listEl.innerHTML = data.quests.map(q => `
+          <div style="background: var(--bg-card); border-radius: 8px; padding: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-weight: 700; color: #fff;">${q.name}</div>
+              <div style="font-size: 12px; color: var(--text-muted);">Loại: ${q.task_type} · Quà: ${q.reward}</div>
+            </div>
+            <div style="font-weight: 600; color: ${q.completed ? 'var(--green)' : 'var(--yellow)'};">
+              ${q.completed ? '✔ Đã hoàn thành' : '⏳ Chưa xong'}
+            </div>
+          </div>
+        `).join('');
+        showToast(`Tìm thấy ${data.quests.length} nhiệm vụ!`, 'success');
+      } catch (e) {
+        showToast(`Lỗi quét: ${e.message}`, 'error');
+      }
+    }
+
+    async function startAutoQuests() {
+      const token = document.getElementById('quest-token').value.trim();
+      if (!token) return showToast('Vui lòng nhập Discord Token!', 'error');
+
+      try {
+        const res = await fetch('/api/quests/start', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+          body: JSON.stringify({ token })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('⚡ Đã kích hoạt Auto-Quests flow!', 'success');
+          document.getElementById('quest-progress-box').innerHTML = '🟢 Đang thực thi... Tiến trình cập nhật theo phút để chống rate-limit!';
+        } else {
+          showToast(`Lỗi: ${data.detail}`, 'error');
+        }
+      } catch (e) {
+        showToast('Lỗi khi kích hoạt!', 'error');
+      }
+    }
+
+    // Tối Nay Lọ Gì Gacha
+    async function fetchActresses() {
+      if (!authToken) return;
+      try {
+        const res = await fetch('/api/toinaylogi/catalog', { credentials: 'include', headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (!res.ok) return;
+        actressesData = await res.json();
+        renderActressesCatalog(actressesData);
+        initRouletteCards();
+      } catch (e) {}
+    }
+
+    function initRouletteCards() {
+      const reel = document.getElementById('roulette-reel');
+      if (!actressesData.length) return;
+      const sample = [...actressesData].sort(() => 0.5 - Math.random()).slice(0, 7);
+      reel.innerHTML = '<div class="roulette-needle"></div>' + sample.map(a => `
+        <div class="roulette-card tier-${a.tier}">
+          <img src="${a.image_url}" alt="${a.name}">
+          <div class="name">${a.name}</div>
+          <div class="badge" style="color: ${a.tier_color}">${a.tier_name}</div>
+        </div>
+      `).join('');
+    }
+
+    async function spinCase(count = 1) {
+      showToast('🌀 Đang quay số hòm...', 'info');
+      try {
+        const res = await fetch(`/api/toinaylogi/roll?count=${count}`, { credentials: 'include', headers: { 'Authorization': `Bearer ${authToken}` } });
+        const data = await res.json();
+        if (!res.ok) return showToast('Lỗi quay hòm!', 'error');
+
+        const winner = count === 1 ? data.winner : data.best;
+        const spotlight = document.getElementById('winner-spotlight');
+        document.getElementById('winner-img').src = winner.image_url;
+        document.getElementById('winner-tier').innerText = winner.tier_badge;
+        document.getElementById('winner-tier').style.color = winner.tier_color;
+        document.getElementById('winner-name').innerText = `${winner.name} (${winner.native_name})`;
+        document.getElementById('winner-details').innerText = `📐 Số đo: ${winner.measurements} | Cup: ${winner.cup} | Cao: ${winner.height_cm}cm`;
+        document.getElementById('winner-code').innerHTML = `🎬 Mã phim gợi ý: <strong style="color: #fff;">${winner.best_code}</strong> (${winner.quote})`;
+
+        spotlight.style.borderColor = winner.tier_color;
+        spotlight.style.display = 'flex';
+        showToast(`🎉 Trúng ${winner.name} (${winner.tier_name})!`, 'success');
+      } catch (e) {
+        showToast('Lỗi khi mở hòm!', 'error');
+      }
+    }
+
+    function filterTier(tier) {
+      if (tier === 'all') {
+        renderActressesCatalog(actressesData);
+      } else {
+        renderActressesCatalog(actressesData.filter(a => a.tier === tier));
+      }
+    }
+
+    function renderActressesCatalog(list) {
+      const box = document.getElementById('actress-catalog');
+      if (!box) return;
+      box.innerHTML = list.map(a => `
+        <div class="card" style="border-left: 4px solid ${a.tier_color};">
+          <div style="display: flex; gap: 12px; align-items: center;">
+            <img src="${a.image_url}" style="width: 50px; height: 50px; border-radius: 10px; object-fit: cover;">
+            <div>
+              <div style="font-weight: 700; color: #fff;">${a.name}</div>
+              <div style="font-size: 11px; color: ${a.tier_color}; font-weight: 700;">${a.tier_badge}</div>
+            </div>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px;">
+            Số đo: <strong>${a.measurements}</strong> · Cup: <strong>${a.cup}</strong>
+          </div>
+          <div style="font-size: 12px; color: var(--yellow); margin-top: 4px;">
+            Mã: <code>${a.best_code}</code>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Live Logs
+    async function pollLogs() {
+      if (!authToken) return;
+      const tabEl = document.getElementById('tab-logs');
+      if (!tabEl || !tabEl.classList.contains('active')) return;
+
+      try {
+        const res = await fetch('/api/logs', { credentials: 'include', headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (!res.ok) return;
+        const logs = await res.json();
+        const box = document.getElementById('terminal-logs');
+        box.innerHTML = logs.map(l => `
+          <div class="log-line">
+            <span class="log-time">[${l.time}]</span>
+            <span class="log-badge ${l.level}">${l.level}</span>
+            <span class="log-text">${escapeHtml(l.msg)}</span>
+          </div>
+        `).join('');
+        box.scrollTop = box.scrollHeight;
+      } catch (e) {}
+    }
+
+    function clearLogsUI() {
+      document.getElementById('terminal-logs').innerHTML = '';
+    }
+
+    async function syncCommands() {
+      showToast('Đang gửi tín hiệu đồng bộ Slash commands...', 'info');
+      try {
+        const res = await fetch('/api/admin/sync_commands', { method: 'POST', credentials: 'include', headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (res.ok) showToast('✅ Đã đồng bộ Slash commands!', 'success');
+        else showToast('❌ Thất bại!', 'error');
+      } catch (e) {
+        showToast('Lỗi kết nối!', 'error');
+      }
+    }
+
+    function showToast(msg, type = 'info') {
+      const c = document.getElementById('toast-container');
+      const t = document.createElement('div');
+      t.className = `toast ${type}`;
+      t.innerText = msg;
+      c.appendChild(t);
+      setTimeout(() => { t.remove(); }, 4000);
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.innerText = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>

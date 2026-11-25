@@ -3,23 +3,24 @@
 Discord Badge Maximizer - Modern Server Control Panel & GUI Manager
 Provides a complete graphical interface for launching, managing, and monitoring:
   1. 🤖 Discord Bot Server (bot.py) - 1-Click Start, Stop, Restart & Live Status
-  2. 👥 Users & Active Streams Monitor - Real-time statistics across all users
+  2. 👥 Users & Activity Monitor - Real-time statistics across all users
   3. 📜 Server Console & Live Logs - Real-time color-coded streaming log output
-  4. 🎯 Direct Client Streamer & Game Farmer (Optional direct PC streaming)
+  4. 🌐 Web Dashboard Integration - One-click access to Web UI Dashboard
 """
 
-import os
-import sys
-import time
 import json
-import uuid
+import os
+from pathlib import Path
 import queue
 import re
 import signal
 import subprocess
+import sys
 import threading
-from pathlib import Path
+import time
 from typing import Optional
+import uuid
+import webbrowser
 
 # Determine bundle environment vs local script environment
 if getattr(sys, "frozen", False):
@@ -29,19 +30,9 @@ else:
     BUNDLE_DIR = Path(__file__).resolve().parent
     APP_DIR = BUNDLE_DIR
 
-# Ensure APP_DIR and BUNDLE_DIR are in sys.path
 for p in [str(APP_DIR), str(BUNDLE_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
-
-# Check if launched as background bot server subprocess
-if len(sys.argv) > 1 and sys.argv[1] in ("--server", "--bot", "bot"):
-    try:
-        import bot
-        bot.run_bot()
-    except Exception as exc:
-        print(f"[Fatal Bot Server Error] {exc}")
-    sys.exit(0)
 
 import customtkinter as ctk
 import tkinter as tk
@@ -49,20 +40,9 @@ from tkinter import filedialog, messagebox
 
 # Core backend modules
 import crypto_vault
-from stream import (
-    State,
-    Session,
-    GatewayStreamEngine,
-    Console,
-    format_timer,
-    _user_id_from_token,
-    find_random_voice_channel_from_token,
-    extract_channel_id,
-    USERS_URL,
-    USER_AGENT,
-    _load_env_file,
-)
-from games import ApplicationController, AccountSessionState
+from games import AccountSessionState, ApplicationController
+import user_manager
+import web_dashboard
 
 # Appearance setup
 ctk.set_appearance_mode("Dark")
@@ -72,6 +52,13 @@ ENV_FILE = APP_DIR / ".env"
 USER_DATA_DIR = crypto_vault.get_user_data_dir()
 
 
+def format_timer(seconds: float) -> str:
+    secs = int(seconds)
+    h, rem = divmod(secs, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}h:{m:02d}m:{s:02d}s"
+
+
 class GUIConsoleLogger:
     """Thread-safe pipe that intercepts backend console logs and queues them for the GUI."""
 
@@ -79,23 +66,31 @@ class GUIConsoleLogger:
         self.queue = log_queue
         self.ansi_regex = re.compile(r"\x1b\[[0-9;]*[mGKHJ]")
 
-    def write(self, message: str) -> None:
-        if message:
-            clean = self.ansi_regex.sub("", message)
-            if clean.strip():
-                tag = "info"
-                lower = clean.lower()
-                if "✓" in clean or "online" in lower or "thành công" in lower or "success" in lower or "active" in lower:
-                    tag = "success"
-                elif "!" in clean or "warn" in lower or "cảnh báo" in lower or "paused" in lower:
-                    tag = "warning"
-                elif "✗" in clean or "error" in lower or "lỗi" in lower or "fail" in lower:
-                    tag = "error"
-                elif "●" in clean or "live" in lower or "broadcast" in lower:
-                    tag = "live"
-                self.queue.put((clean.rstrip(), tag))
+    def write(self, text: str):
+        if not text:
+            return
+        clean = self.ansi_regex.sub("", text)
+        for line in clean.splitlines():
+            line_str = line.strip()
+            if not line_str:
+                continue
 
-    def flush(self) -> None:
+            tag = "normal"
+            low = line_str.lower()
+            if "✓" in line_str or "thành công" in low or "success" in low:
+                tag = "success"
+            elif "!" in line_str or "cảnh báo" in low or "warn" in low:
+                tag = "warning"
+            elif "✗" in line_str or "lỗi" in low or "error" in low or "failed" in low:
+                tag = "error"
+            elif "●" in line_str or "live" in low or "stream" in low:
+                tag = "live"
+            elif "ℹ" in line_str or "info" in low or "đang" in low:
+                tag = "info"
+
+            self.queue.put((line_str, tag))
+
+    def flush(self):
         pass
 
 
@@ -103,71 +98,36 @@ class DiscordServerManagerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Discord Badge Maximizer - Server Manager & GUI Control Panel")
-        self.geometry("1060x740")
-        self.minsize(960, 660)
+        self.title("Discord Badge Maximizer & Quests Hub · Control Manager")
+        self.geometry("1100, 720")
+        self.minsize(960, 640)
 
-        # Set Window Icon
-        for candidate_dir in [BUNDLE_DIR / "assets", APP_DIR / "assets", Path.cwd() / "assets"]:
-            ico_path = candidate_dir / "icon.ico"
-            png_path = candidate_dir / "icon.png"
-            if sys.platform == "win32" and ico_path.exists():
-                try:
-                    self.iconbitmap(default=str(ico_path))
-                    break
-                except Exception:
-                    pass
-            elif png_path.exists():
-                try:
-                    from PIL import ImageTk
-                    img = ImageTk.PhotoImage(file=str(png_path))
-                    self.iconphoto(False, img)
-                    break
-                except Exception:
-                    pass
+        # Process management states
+        self.server_proc: Optional[subprocess.Popen] = None
+        self.server_thread: Optional[threading.Thread] = None
+        self.server_running = False
+        self.server_start_time: float = 0.0
 
-        # State management
+        # Background Queues
         self.log_queue = queue.Queue()
         self.gui_logger = GUIConsoleLogger(self.log_queue)
 
-        # Server Subprocess Management
-        self.server_proc: Optional[subprocess.Popen] = None
-        self.server_start_time: float = 0.0
-        self.server_running = False
-
-        # Direct Client Stream/Farm (Optional Tab)
-        self.client_stream_engine: Optional[GatewayStreamEngine] = None
-        self.client_stream_thread: Optional[threading.Thread] = None
-        self.client_stream_running = False
-        self.client_farm_thread: Optional[threading.Thread] = None
-        self.client_farm_running = False
-
-        # Load environment configuration
+        # Load environment variables
         self.env_config = self._read_env_file()
 
-        self._setup_layout()
-        self._load_env_into_ui()
+        # Build UI layout
+        self._build_top_banner()
+        self._build_main_tabs()
 
-        # Start periodic GUI updates
+        # Start periodic telemetry loops
         self.after(100, self._poll_log_queue)
         self.after(1000, self._update_telemetry_loop)
 
-        # Intercept app window close to gracefully stop child processes
+        # Window protocol
         self.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
-    # ----------------------------------------------------
-    # Environment (.env) Handling
-    # ----------------------------------------------------
-    def _read_env_file(self) -> dict:
-        config = {
-            "DISCORD_BOT_TOKEN": "",
-            "PRIMARY_ADMIN_ID": "707934327467671643",
-            "DISCORD_TOKEN": "",
-            "DISCORD_VIEWER_TOKEN": "",
-            "DISCORD_COOKIE": "",
-            "DISCORD_CHANNEL_ID": "",
-            "DISCORD_STREAM_URL": "",
-        }
+    def _read_env_file(self) -> dict[str, str]:
+        data = {}
         if ENV_FILE.exists():
             try:
                 for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
@@ -175,228 +135,141 @@ class DiscordServerManagerApp(ctk.CTk):
                     if not line or line.startswith("#") or "=" not in line:
                         continue
                     k, v = line.split("=", 1)
-                    k = k.strip()
-                    v = v.strip().strip("'\"")
-                    if k:
-                        config[k] = v
+                    data[k.strip()] = v.strip().strip("'\"")
             except Exception:
                 pass
-        return config
+        return data
 
-    def _write_env_file(self) -> None:
+    def _write_env_file(self):
         self.env_config["DISCORD_BOT_TOKEN"] = self.entry_bot_token.get().strip()
-        self.env_config["PRIMARY_ADMIN_ID"] = self.entry_admin_id.get().strip() or "707934327467671643"
-
+        self.env_config["PRIMARY_ADMIN_ID"] = self.entry_admin_id.get().strip()
         lines = [
-            "# Discord Badge Maximizer - Server Configuration",
-            f"DISCORD_BOT_TOKEN={self.env_config['DISCORD_BOT_TOKEN']}",
-            f"PRIMARY_ADMIN_ID={self.env_config['PRIMARY_ADMIN_ID']}",
-            f"ADMIN_ID={self.env_config['PRIMARY_ADMIN_ID']}",
-            f"DISCORD_TOKEN={self.env_config.get('DISCORD_TOKEN', '')}",
-            f"DISCORD_VIEWER_TOKEN={self.env_config.get('DISCORD_VIEWER_TOKEN', '')}",
-            f"DISCORD_COOKIE={self.env_config.get('DISCORD_COOKIE', '')}",
-            f"DISCORD_CHANNEL_ID={self.env_config.get('DISCORD_CHANNEL_ID', '')}",
-            f"DISCORD_STREAM_URL={self.env_config.get('DISCORD_STREAM_URL', '')}",
+            "# Discord Badge Maximizer & Entertainment Hub Configuration",
+            f"DISCORD_BOT_TOKEN={self.env_config.get('DISCORD_BOT_TOKEN', '')}",
+            f"PRIMARY_ADMIN_ID={self.env_config.get('PRIMARY_ADMIN_ID', '707934327467671643')}",
+            f"ADMIN_SECRET={web_dashboard.ADMIN_SECRET}",
         ]
-        try:
-            ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        except Exception as exc:
-            self.gui_logger.write(f"✗ Không thể ghi file .env: {exc}\n")
+        ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     # ----------------------------------------------------
-    # Layout Setup
+    # Header Banner
     # ----------------------------------------------------
-    def _setup_layout(self):
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+    def _build_top_banner(self):
+        banner = ctk.CTkFrame(self, fg_color="#1e1f22", corner_radius=0, height=75)
+        banner.pack(fill="x", side="top", padx=0, pady=0)
+        banner.pack_propagate(False)
 
-        # Header Frame
-        header = ctk.CTkFrame(self, fg_color="#1e1f22", corner_radius=0, height=65)
-        header.grid(row=0, column=0, sticky="ew")
-        header.grid_columnconfigure(1, weight=1)
+        brand_frame = ctk.CTkFrame(banner, fg_color="transparent")
+        brand_frame.pack(side="left", padx=20, pady=10)
 
-        lbl_logo = ctk.CTkLabel(
-            header,
-            text="⚡ DISCORD BADGE MAXIMIZER",
-            font=ctk.CTkFont(family="Arial", size=18, weight="bold"),
-            text_color="#5865F2",
+        title_lbl = ctk.CTkLabel(
+            brand_frame,
+            text="⚡ DISCORD MAXIMIZER & QUESTS HUB",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color="#ffffff",
         )
-        lbl_logo.grid(row=0, column=0, padx=(20, 10), pady=15, sticky="w")
+        title_lbl.pack(anchor="w")
 
-        lbl_sub = ctk.CTkLabel(
-            header,
-            text="👑 Quản Trị Server Bot Discord (Slash Commands & 24/7 Multi-User Stream)",
+        sub_lbl = ctk.CTkLabel(
+            brand_frame,
+            text="Tự động Quests (phút chống 429), Cày Game Playtime, Mở Hòm Lọ Gì & Web Dashboard Admin",
             font=ctk.CTkFont(size=12),
             text_color="#949ba4",
         )
-        lbl_sub.grid(row=0, column=1, padx=5, pady=15, sticky="w")
+        sub_lbl.pack(anchor="w")
+
+        status_box = ctk.CTkFrame(banner, fg_color="#2b2d31", corner_radius=20)
+        status_box.pack(side="right", padx=20, pady=16)
 
         self.lbl_server_badge = ctk.CTkLabel(
-            header,
-            text="🔴 SERVER OFFLINE",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color="#f23f43",
-            fg_color="#111214",
-            corner_radius=6,
-            padx=12,
-            pady=5,
+            status_box,
+            text="● SERVER BOT: ĐÃ DỪNG",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#da373c",
+            padx=16,
+            pady=6,
         )
-        self.lbl_server_badge.grid(row=0, column=2, padx=20, pady=15, sticky="e")
+        self.lbl_server_badge.pack()
 
-        # Main Tabview
-        self.tabview = ctk.CTkTabview(self, fg_color="#2b2d31", segmented_button_selected_color="#5865F2")
-        self.tabview.grid(row=1, column=0, padx=15, pady=(10, 15), sticky="nsew")
+    # ----------------------------------------------------
+    # Tabview Container
+    # ----------------------------------------------------
+    def _build_main_tabs(self):
+        self.tabview = ctk.CTkTabview(self, corner_radius=10, fg_color="#18191c")
+        self.tabview.pack(fill="both", expand=True, padx=15, pady=(10, 15))
 
-        self.tab_server = self.tabview.add("👑 Quản Trị Server Bot")
-        self.tab_users = self.tabview.add("👥 Giám Sát Người Dùng & Streams")
-        self.tab_logs = self.tabview.add("📜 Server Console (Live Logs)")
-        self.tab_client = self.tabview.add("🎯 Cày Trực Tiếp (Client Mode)")
+        self.tab_dashboard = self.tabview.add("📊 Quản Lý Server & Bot")
+        self.tab_users = self.tabview.add("👥 Danh Sách Users & Game")
+        self.tab_logs = self.tabview.add("📜 Nhật Ký Server (Live Logs)")
+        self.tab_web = self.tabview.add("🌐 Web Dashboard & Quick Launch")
 
-        self._build_server_tab()
+        self._build_dashboard_tab()
         self._build_users_tab()
         self._build_logs_tab()
-        self._build_client_tab()
+        self._build_web_tab()
 
     # ----------------------------------------------------
-    # TAB 1: Server Management & Controls
+    # TAB 1: Server Management & Configuration
     # ----------------------------------------------------
-    def _build_server_tab(self):
-        tab = self.tab_server
+    def _build_dashboard_tab(self):
+        tab = self.tab_dashboard
         tab.grid_columnconfigure(0, weight=3)
         tab.grid_columnconfigure(1, weight=2)
-        tab.grid_rowconfigure(2, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
 
-        # Left Column: Configuration & Controls
-        left_frame = ctk.CTkFrame(tab, fg_color="#313338", corner_radius=10)
-        left_frame.grid(row=0, column=0, rowspan=3, padx=(5, 10), pady=5, sticky="nsew")
+        left_frame = ctk.CTkFrame(tab, fg_color="#1e1f22", corner_radius=10)
+        left_frame.grid(row=0, column=0, padx=(5, 10), pady=5, sticky="nsew")
         left_frame.grid_columnconfigure(1, weight=1)
 
-        lbl_sec1 = ctk.CTkLabel(left_frame, text="⚙️ Cấu Hình Khởi Động Server Bot", font=ctk.CTkFont(size=15, weight="bold"), text_color="#ffffff")
-        lbl_sec1.grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 10), sticky="w")
+        ctk.CTkLabel(left_frame, text="⚙️ Cấu Hình Thông Số Bot Server", font=ctk.CTkFont(size=15, weight="bold"), text_color="#ffffff").grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 10), sticky="w")
 
-        # Bot Token Input
-        ctk.CTkLabel(left_frame, text="Bot Token:", font=ctk.CTkFont(size=13)).grid(row=1, column=0, padx=15, pady=8, sticky="w")
-        self.entry_bot_token = ctk.CTkEntry(left_frame, placeholder_text="Dán DISCORD_BOT_TOKEN (Lấy từ Discord Developer Portal)...", show="•")
-        self.entry_bot_token.grid(row=1, column=1, padx=(0, 15), pady=8, sticky="ew")
+        ctk.CTkLabel(left_frame, text="Discord Bot Token:").grid(row=1, column=0, padx=15, pady=8, sticky="w")
+        self.entry_bot_token = ctk.CTkEntry(left_frame, placeholder_text="Điền Bot Application Token...", show="•")
+        self.entry_bot_token.grid(row=1, column=1, padx=(5, 15), pady=8, sticky="ew")
 
-        # Admin ID Input
-        ctk.CTkLabel(left_frame, text="Admin User ID:", font=ctk.CTkFont(size=13)).grid(row=2, column=0, padx=15, pady=8, sticky="w")
-        self.entry_admin_id = ctk.CTkEntry(left_frame, placeholder_text="707934327467671643")
-        self.entry_admin_id.grid(row=2, column=1, padx=(0, 15), pady=8, sticky="ew")
+        ctk.CTkLabel(left_frame, text="Admin User ID:").grid(row=2, column=0, padx=15, pady=8, sticky="w")
+        self.entry_admin_id = ctk.CTkEntry(left_frame, placeholder_text="ID Discord tài khoản Admin...")
+        self.entry_admin_id.grid(row=2, column=1, padx=(5, 15), pady=8, sticky="ew")
 
-        # Data Directory Input & Custom Picker
-        ctk.CTkLabel(left_frame, text="Thư mục Data:", font=ctk.CTkFont(size=13)).grid(row=3, column=0, padx=15, pady=8, sticky="w")
-        data_dir_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
-        data_dir_frame.grid(row=3, column=1, padx=(0, 15), pady=8, sticky="ew")
-        data_dir_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(left_frame, text="Thư Mục Lưu Trữ:").grid(row=3, column=0, padx=15, pady=8, sticky="w")
+        dir_box = ctk.CTkFrame(left_frame, fg_color="transparent")
+        dir_box.grid(row=3, column=1, padx=(5, 15), pady=8, sticky="ew")
+        dir_box.grid_columnconfigure(0, weight=1)
 
-        self.entry_data_dir = ctk.CTkEntry(data_dir_frame)
-        self.entry_data_dir.insert(0, str(crypto_vault.get_data_dir()))
+        self.entry_data_dir = ctk.CTkEntry(dir_box)
+        self.entry_data_dir.insert(0, str(USER_DATA_DIR))
         self.entry_data_dir.configure(state="readonly")
-        self.entry_data_dir.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+        self.entry_data_dir.grid(row=0, column=0, sticky="ew", padx=(0, 5))
 
-        btn_browse_data = ctk.CTkButton(data_dir_frame, text="📁 Đổi Thư Mục...", width=110, height=28, fg_color="#383a40", hover_color="#404249", command=self._browse_data_dir_action)
-        btn_browse_data.grid(row=0, column=1, padx=(0, 4), sticky="e")
-
-        btn_open_data = ctk.CTkButton(data_dir_frame, text="📂 Mở", width=55, height=28, fg_color="#383a40", hover_color="#404249", command=self._open_data_dir_action)
-        btn_open_data.grid(row=0, column=2, sticky="e")
-
-        # Show/Hide Token Toggle & Save Config
-        btn_row = ctk.CTkFrame(left_frame, fg_color="transparent")
-        btn_row.grid(row=4, column=1, padx=(0, 15), pady=(0, 15), sticky="ew")
-        btn_row.grid_columnconfigure(1, weight=1)
+        btn_browse = ctk.CTkButton(dir_box, text="📂 Đổi", width=60, command=self._browse_data_dir_action)
+        btn_browse.grid(row=0, column=1)
 
         self.show_bot_token_var = ctk.BooleanVar(value=False)
-        chk_show = ctk.CTkCheckBox(btn_row, text="Hiện Bot Token", variable=self.show_bot_token_var, command=self._toggle_bot_token_visibility, font=ctk.CTkFont(size=11))
-        chk_show.grid(row=0, column=0, sticky="w")
+        chk_show = ctk.CTkCheckBox(left_frame, text="Hiển thị Bot Token", variable=self.show_bot_token_var, command=self._toggle_bot_token_visibility)
+        chk_show.grid(row=4, column=1, padx=(5, 15), pady=4, sticky="w")
 
-        btn_save_env = ctk.CTkButton(btn_row, text="💾 Lưu Cấu Hình .env", width=130, height=28, fg_color="#383a40", hover_color="#404249", command=self._save_env_action)
-        btn_save_env.grid(row=0, column=1, sticky="e")
+        btn_save_env = ctk.CTkButton(left_frame, text="💾 Lưu Cấu Hình Vào .env", fg_color="#4e5058", hover_color="#6d6f78", command=self._save_env_action)
+        btn_save_env.grid(row=5, column=0, columnspan=2, padx=15, pady=12, sticky="ew")
 
-        # Primary Server Controls
-        lbl_sec2 = ctk.CTkLabel(left_frame, text="🎮 Bảng Điều Khiển Server", font=ctk.CTkFont(size=15, weight="bold"), text_color="#ffffff")
-        lbl_sec2.grid(row=5, column=0, columnspan=2, padx=15, pady=(15, 10), sticky="w")
+        ctk.CTkLabel(left_frame, text="🚀 Điều Khiển Máy Chủ (Subprocess)", font=ctk.CTkFont(size=15, weight="bold"), text_color="#ffffff").grid(row=6, column=0, columnspan=2, padx=15, pady=(15, 8), sticky="w")
 
-        btn_box = ctk.CTkFrame(left_frame, fg_color="transparent")
-        btn_box.grid(row=6, column=0, columnspan=2, padx=15, pady=(5, 15), sticky="ew")
-        btn_box.grid_columnconfigure((0, 1), weight=1)
+        btn_grid = ctk.CTkFrame(left_frame, fg_color="transparent")
+        btn_grid.grid(row=7, column=0, columnspan=2, padx=15, pady=(5, 15), sticky="ew")
+        btn_grid.grid_columnconfigure((0, 1, 2), weight=1)
 
-        self.btn_start_server = ctk.CTkButton(
-            btn_box,
-            text="🟢 KHỞI ĐỘNG SERVER BOT",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="#23a55a",
-            hover_color="#1b8547",
-            height=46,
-            command=self._start_server_action,
-        )
-        self.btn_start_server.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+        self.btn_start_srv = ctk.CTkButton(btn_grid, text="▶️ KHỞI ĐỘNG BOT", fg_color="#23a55a", hover_color="#1b8547", height=42, font=ctk.CTkFont(size=13, weight="bold"), command=self._start_server_action)
+        self.btn_start_srv.grid(row=0, column=0, padx=4, sticky="ew")
 
-        self.btn_stop_server = ctk.CTkButton(
-            btn_box,
-            text="⏹️ DỪNG SERVER BOT",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="#da373c",
-            hover_color="#a82b2f",
-            height=46,
-            state="disabled",
-            command=self._stop_server_action,
-        )
-        self.btn_stop_server.grid(row=0, column=1, padx=(6, 0), sticky="ew")
+        self.btn_stop_srv = ctk.CTkButton(btn_grid, text="⏹️ DỪNG BOT", fg_color="#da373c", hover_color="#a82b2f", height=42, state="disabled", font=ctk.CTkFont(size=13, weight="bold"), command=self._stop_server_action)
+        self.btn_stop_srv.grid(row=0, column=1, padx=4, sticky="ew")
 
-        self.btn_restart_server = ctk.CTkButton(
-            btn_box,
-            text="🔄 KHỞI ĐỘNG LẠI SERVER (RESTART)",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#f0b232",
-            hover_color="#c89224",
-            text_color="#000000",
-            height=36,
-            state="disabled",
-            command=self._restart_server_action,
-        )
-        self.btn_restart_server.grid(row=1, column=0, columnspan=2, pady=(10, 0), sticky="ew")
+        self.btn_restart_srv = ctk.CTkButton(btn_grid, text="🔄 KHỞI ĐỘNG LẠI", fg_color="#f0b232", hover_color="#c48f21", height=42, state="disabled", font=ctk.CTkFont(size=13, weight="bold"), text_color="#000000", command=self._restart_server_action)
+        self.btn_restart_srv.grid(row=0, column=2, padx=4, sticky="ew")
 
-        # Quick Admin Operations
-        lbl_sec3 = ctk.CTkLabel(left_frame, text="⚡ Thao Tác Nhanh Toàn Hệ Thống", font=ctk.CTkFont(size=14, weight="bold"), text_color="#ffffff")
-        lbl_sec3.grid(row=7, column=0, columnspan=2, padx=15, pady=(15, 8), sticky="w")
+        self._load_env_into_ui()
 
-        admin_box = ctk.CTkFrame(left_frame, fg_color="transparent")
-        admin_box.grid(row=8, column=0, columnspan=2, padx=15, pady=(0, 15), sticky="ew")
-        admin_box.grid_columnconfigure((0, 1, 2), weight=1)
-
-        btn_restart_all = ctk.CTkButton(
-            admin_box,
-            text="🔄 Phát Lại Mọi User",
-            font=ctk.CTkFont(size=11),
-            fg_color="#383a40",
-            hover_color="#4e5058",
-            command=self._admin_restart_all_action,
-        )
-        btn_restart_all.grid(row=0, column=0, padx=(0, 4), sticky="ew")
-
-        btn_prune = ctk.CTkButton(
-            admin_box,
-            text="🧹 Dọn Luồng Rớt",
-            font=ctk.CTkFont(size=11),
-            fg_color="#383a40",
-            hover_color="#4e5058",
-            command=self._admin_prune_action,
-        )
-        btn_prune.grid(row=0, column=1, padx=4, sticky="ew")
-
-        btn_stop_all = ctk.CTkButton(
-            admin_box,
-            text="🛑 Dừng Tất Cả Stream",
-            font=ctk.CTkFont(size=11),
-            fg_color="#5c1d24",
-            hover_color="#78242e",
-            command=self._admin_stop_all_action,
-        )
-        btn_stop_all.grid(row=0, column=2, padx=(4, 0), sticky="ew")
-
-        # Right Column: Live Telemetry & System Statistics
-        right_frame = ctk.CTkFrame(tab, fg_color="#313338", corner_radius=10)
+        # Right Telemetry Panel
+        right_frame = ctk.CTkFrame(tab, fg_color="#1e1f22", corner_radius=10)
         right_frame.grid(row=0, column=1, rowspan=3, padx=(10, 5), pady=5, sticky="nsew")
         right_frame.grid_columnconfigure(0, weight=1)
 
@@ -405,12 +278,12 @@ class DiscordServerManagerApp(ctk.CTk):
         self.card_srv_status = self._create_telemetry_card(right_frame, row=1, title="TRẠNG THÁI SERVER BOT", value="🔴 ĐÃ DỪNG (OFFLINE)", color="#da373c")
         self.card_srv_uptime = self._create_telemetry_card(right_frame, row=2, title="THỜI GIAN HOẠT ĐỘNG (UPTIME)", value="00h:00m:00s", color="#5865F2")
         self.card_total_users = self._create_telemetry_card(right_frame, row=3, title="TỔNG NGƯỜI DÙNG ĐÃ ĐĂNG KÝ", value="0 users", color="#23a55a")
-        self.card_active_streams = self._create_telemetry_card(right_frame, row=4, title="LUỒNG STREAM ĐANG CHẠY", value="0 luồng", color="#f0b232")
-        self.card_total_hours = self._create_telemetry_card(right_frame, row=5, title="TỔNG GIỜ STREAM TOÀN BOT", value="0.0h", color="#f47fff")
+        self.card_web_status = self._create_telemetry_card(right_frame, row=4, title="WEB DASHBOARD QUẢN TRỊ", value="CỔNG 5000", color="#f0b232")
+        self.card_total_hours = self._create_telemetry_card(right_frame, row=5, title="TỔNG GIỜ GAME TOÀN BOT", value="0.0h", color="#f47fff")
 
         lbl_footer = ctk.CTkLabel(
             right_frame,
-            text="👑 Admin có quyền kiểm soát tuyệt đối qua lệnh /admin.\n🔒 Toàn bộ token user được mã hóa DES+AES ở cấp độ máy chủ.",
+            text="👑 Admin có quyền kiểm soát tuyệt đối qua Web Dashboard & /admin.\n🔒 Toàn bộ token user được mã hóa DES+AES an toàn.",
             font=ctk.CTkFont(size=11),
             text_color="#949ba4",
             justify="center",
@@ -428,7 +301,7 @@ class DiscordServerManagerApp(ctk.CTk):
         return val_lbl
 
     # ----------------------------------------------------
-    # TAB 2: Users & Streams Monitor
+    # TAB 2: Users & Activity Monitor
     # ----------------------------------------------------
     def _build_users_tab(self):
         tab = self.tab_users
@@ -439,7 +312,7 @@ class DiscordServerManagerApp(ctk.CTk):
         top_bar.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
         top_bar.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(top_bar, text="👥 Danh Sách Người Dùng & Luồng Stream Trong Hệ Thống", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(top_bar, text="👥 Danh Sách Người Dùng & Hoạt Động Trong Hệ Thống", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, sticky="w")
 
         btn_refresh = ctk.CTkButton(top_bar, text="🔄 Làm Mới", width=100, command=self._refresh_users_table)
         btn_refresh.grid(row=0, column=1, sticky="e")
@@ -448,21 +321,11 @@ class DiscordServerManagerApp(ctk.CTk):
         self.users_scroll.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
         self.users_scroll.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        self._refresh_users_table()
-
     def _refresh_users_table(self):
-        # Auto-sync any backup files placed in data/user or data/*.json
-        try:
-            crypto_vault.sync_user_backup_files()
-        except Exception:
-            pass
-
-        # Clear existing items
         for w in self.users_scroll.winfo_children():
             w.destroy()
 
-        # Header row
-        headers = ["Người Dùng (Discord ID)", "Kênh Voice Đã Lưu", "Nguồn Video", "Tổng Giờ Stream"]
+        headers = ["Người Dùng (Discord ID)", "Trạng Thái Token", "Số Game Đã Cày", "Tổng Giờ Game"]
         for col, h in enumerate(headers):
             lbl = ctk.CTkLabel(self.users_scroll, text=h, font=ctk.CTkFont(size=12, weight="bold"), text_color="#949ba4")
             lbl.grid(row=0, column=col, padx=10, pady=(8, 10), sticky="w")
@@ -477,13 +340,12 @@ class DiscordServerManagerApp(ctk.CTk):
             uid = f.stem
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
-                ch_id = data.get("last_channel_id") or "🎲 Auto Random"
-                url = data.get("stream_url") or "🎞️ Video mẫu"
-                if len(url) > 25:
-                    url = url[:22] + "..."
-                hours = float(data.get("total_stream_hours_claimed", 0.0))
+                tok = data.get("token", "")
+                tok_status = "🟢 Đã cài đặt" if tok else "🔴 Chưa có"
+                games_cnt = int(data.get("total_games_claimed", 0))
+                hours = float(data.get("total_hours_claimed", 0.0))
             except Exception:
-                ch_id, url, hours = "Lỗi đọc", "---", 0.0
+                tok_status, games_cnt, hours = "Lỗi đọc", 0, 0.0
 
             bg_col = "#2b2d31" if idx % 2 == 0 else "#26282c"
             row_frame = ctk.CTkFrame(self.users_scroll, fg_color=bg_col, corner_radius=6)
@@ -491,9 +353,9 @@ class DiscordServerManagerApp(ctk.CTk):
             row_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
             ctk.CTkLabel(row_frame, text=f"👤 {uid}", font=ctk.CTkFont(size=12, weight="bold")).grid(row=0, column=0, padx=10, pady=6, sticky="w")
-            ctk.CTkLabel(row_frame, text=f"🔊 {ch_id}", font=ctk.CTkFont(size=12)).grid(row=0, column=1, padx=10, pady=6, sticky="w")
-            ctk.CTkLabel(row_frame, text=f"📺 {url}", font=ctk.CTkFont(size=12)).grid(row=0, column=2, padx=10, pady=6, sticky="w")
-            ctk.CTkLabel(row_frame, text=f"⏱️ {hours:,.1f}h", font=ctk.CTkFont(size=12, weight="bold"), text_color="#23a55a").grid(row=0, column=3, padx=10, pady=6, sticky="w")
+            ctk.CTkLabel(row_frame, text=tok_status, font=ctk.CTkFont(size=12)).grid(row=0, column=1, padx=10, pady=6, sticky="w")
+            ctk.CTkLabel(row_frame, text=f"🎮 {games_cnt} games", font=ctk.CTkFont(size=12)).grid(row=0, column=2, padx=10, pady=6, sticky="w")
+            ctk.CTkLabel(row_frame, text=f"⏱️ {hours:,.0f}h", font=ctk.CTkFont(size=12, weight="bold"), text_color="#23a55a").grid(row=0, column=3, padx=10, pady=6, sticky="w")
 
     # ----------------------------------------------------
     # TAB 3: Server Console & Live Logs
@@ -517,7 +379,6 @@ class DiscordServerManagerApp(ctk.CTk):
         )
         self.txt_logs.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="nsew")
 
-        # Configure color tags
         self.txt_logs.tag_config("success", foreground="#23a55a")
         self.txt_logs.tag_config("warning", foreground="#f0b232")
         self.txt_logs.tag_config("error", foreground="#f23f43")
@@ -529,45 +390,57 @@ class DiscordServerManagerApp(ctk.CTk):
         bottom_bar.grid_columnconfigure(0, weight=1)
 
         self.auto_scroll_var = ctk.BooleanVar(value=True)
-        chk_scroll = ctk.CTkCheckBox(bottom_bar, text="Tự động cuộn theo log", variable=self.auto_scroll_var, font=ctk.CTkFont(size=11))
-        chk_scroll.grid(row=0, column=0, sticky="w")
+        chk_scroll = ctk.CTkCheckBox(bottom_bar, text="Tự động cuộn xuống", variable=self.auto_scroll_var)
+        chk_scroll.grid(row=0, column=0, padx=10, sticky="w")
 
-        btn_copy = ctk.CTkButton(bottom_bar, text="📋 Sao Chép", width=90, command=self._copy_logs)
+        btn_copy = ctk.CTkButton(bottom_bar, text="📋 Sao Chép", width=90, fg_color="#4e5058", hover_color="#6d6f78", command=self._copy_logs)
         btn_copy.grid(row=0, column=1, padx=5)
 
-        btn_clear = ctk.CTkButton(bottom_bar, text="🧹 Xóa Log", width=90, fg_color="#313338", hover_color="#383a40", command=self._clear_logs)
-        btn_clear.grid(row=0, column=2, padx=5)
+        btn_clear = ctk.CTkButton(bottom_bar, text="🧹 Xóa Màn Hình", width=90, fg_color="#4e5058", hover_color="#6d6f78", command=self._clear_logs)
+        btn_clear.grid(row=0, column=2, padx=(5, 10))
 
     # ----------------------------------------------------
-    # TAB 4: Direct Client Stream / Farm (Optional Mode)
+    # TAB 4: Web Dashboard & Quick Launch
     # ----------------------------------------------------
-    def _build_client_tab(self):
-        tab = self.tab_client
+    def _build_web_tab(self):
+        tab = self.tab_web
         tab.grid_columnconfigure(0, weight=1)
 
-        frame = ctk.CTkFrame(tab, fg_color="#313338", corner_radius=10)
+        frame = ctk.CTkFrame(tab, fg_color="#1e1f22", corner_radius=10)
         frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(frame, text="🎯 Chế Độ Cày Trực Tiếp (Không Cần Mời Bot)", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+        ctk.CTkLabel(frame, text="🌐 Bảng Điều Khiển Web Dashboard (Admin Web Control)", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=20, pady=(20, 10), sticky="w")
 
-        ctk.CTkLabel(frame, text="User Token Cá Nhân:").grid(row=1, column=0, padx=20, pady=8, sticky="w")
-        self.entry_client_token = ctk.CTkEntry(frame, placeholder_text="Token Discord tài khoản cần cày...", show="•")
-        self.entry_client_token.grid(row=1, column=1, padx=20, pady=8, sticky="ew")
-
-        ctk.CTkLabel(frame, text="ID Kênh Voice (Tùy chọn):").grid(row=2, column=0, padx=20, pady=8, sticky="w")
-        self.entry_client_vc = ctk.CTkEntry(frame, placeholder_text="Để trống nếu muốn tự chọn phòng ngẫu nhiên...")
-        self.entry_client_vc.grid(row=2, column=1, padx=20, pady=8, sticky="ew")
+        info_text = (
+            "Web Dashboard tích hợp trực tiếp bên trong Discord Bot, cho phép bạn:\n"
+            "• Gửi thông báo đến mọi kênh Discord với Embed tùy biến và tùy chọn tag @everyone / @here\n"
+            "• Xem trước trực tiếp (Live Discord Preview) dạng WYSIWYG trước khi gửi\n"
+            "• Mở hòm CS:GO gacha Tối Nay Lọ Gì (zennomi/toinaylogi) ngay trên trình duyệt\n"
+            "• Quản lý Quests (cập nhật theo phút chống rate-limit) và xem Live Console Logs thời gian thực\n"
+        )
+        ctk.CTkLabel(frame, text=info_text, font=ctk.CTkFont(size=13), text_color="#dbdee1", justify="left").grid(row=1, column=0, padx=20, pady=10, sticky="w")
 
         btn_box = ctk.CTkFrame(frame, fg_color="transparent")
-        btn_box.grid(row=3, column=0, columnspan=2, padx=20, pady=15, sticky="ew")
-        btn_box.grid_columnconfigure((0, 1), weight=1)
+        btn_box.grid(row=2, column=0, padx=20, pady=20, sticky="ew")
 
-        self.btn_client_stream = ctk.CTkButton(btn_box, text="🔴 BẮT ĐẦU STREAM TRỰC TIẾP", fg_color="#23a55a", hover_color="#1b8547", height=40, command=self._client_stream_action)
-        self.btn_client_stream.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+        btn_open_web = ctk.CTkButton(
+            btn_box,
+            text="🚀 MỞ WEB DASHBOARD TRÊN TRÌNH DUYỆT",
+            fg_color="#5865F2",
+            hover_color="#4752c4",
+            height=48,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._open_web_dashboard,
+        )
+        btn_open_web.pack(fill="x", pady=6)
 
-        self.btn_client_stop = ctk.CTkButton(btn_box, text="⏹️ DỪNG STREAM", fg_color="#da373c", hover_color="#a82b2f", height=40, state="disabled", command=self._client_stop_action)
-        self.btn_client_stop.grid(row=0, column=1, padx=(6, 0), sticky="ew")
+    def _open_web_dashboard(self):
+        port = int(self.env_config.get("PORT") or self.env_config.get("WEB_PORT") or 5000)
+        token = web_dashboard.ADMIN_SECRET
+        url = f"http://localhost:{port}/?token={token}"
+        webbrowser.open(url)
+        self.gui_logger.write(f"🌐 Đã mở Web Dashboard tại: {url}\n")
 
     # ----------------------------------------------------
     # Server Subprocess Controls
@@ -598,87 +471,62 @@ class DiscordServerManagerApp(ctk.CTk):
             self.entry_data_dir.insert(0, str(new_dir))
             self.entry_data_dir.configure(state="readonly")
             self._refresh_users_table()
-            self.gui_logger.write(f"✓ Đã chuyển thư mục lưu trữ dữ liệu sang:\n  {new_dir}\n")
-            messagebox.showinfo("Đã Cập Nhật", f"Đã chuyển vị trí thư mục dữ liệu thành công:\n{new_dir}")
-
-    def _open_data_dir_action(self):
-        d = crypto_vault.get_data_dir()
-        d.mkdir(parents=True, exist_ok=True)
-        try:
-            if sys.platform == "win32":
-                os.startfile(str(d))
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(d)])
-            else:
-                subprocess.Popen(["xdg-open", str(d)])
-        except Exception as e:
-            messagebox.showerror("Lỗi Mở Thư Mục", f"Không thể mở thư mục: {e}")
 
     def _start_server_action(self):
         token = self.entry_bot_token.get().strip()
         if not token:
-            messagebox.showerror("Thiếu Bot Token", "Vui lòng nhập DISCORD_BOT_TOKEN trước khi khởi động server!")
+            messagebox.showerror("Thiếu Token", "Vui lòng nhập Discord Bot Token trong mục Cấu Hình!")
             return
 
         self._write_env_file()
 
-        # Build child process environment
-        child_env = os.environ.copy()
-        child_env["DISCORD_BOT_TOKEN"] = token
-        child_env["PRIMARY_ADMIN_ID"] = self.entry_admin_id.get().strip() or "707934327467671643"
-        child_env["DISCORD_DATA_DIR"] = str(crypto_vault.get_data_dir())
-        child_env["PYTHONUNBUFFERED"] = "1"
-        child_env["PYTHONIOENCODING"] = "utf-8"
+        bot_script = APP_DIR / "bot.py"
+        if not bot_script.exists():
+            messagebox.showerror("Lỗi", "Không tìm thấy file bot.py trong thư mục làm việc!")
+            return
 
-        # Determine execution command
-        if getattr(sys, "frozen", False):
-            cmd = [sys.executable, "--server"]
-        else:
-            cmd = [sys.executable, str(APP_DIR / "gui.py"), "--server"]
+        self.btn_start_srv.configure(state="disabled")
+        self.btn_stop_srv.configure(state="normal")
+        self.btn_restart_srv.configure(state="normal")
 
-        # 100% Hide Console Window on Windows - Absolutely NO extra terminal
-        creationflags = 0
-        startupinfo = None
-        if sys.platform == "win32":
-            creationflags = subprocess.CREATE_NO_WINDOW
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
+        self.server_running = True
+        self.server_start_time = time.time()
+        self.card_srv_status.configure(text="🟢 ĐANG CHẠY (ONLINE)", text_color="#23a55a")
+        self.lbl_server_badge.configure(text="● SERVER BOT: ĐANG CHẠY", text_color="#23a55a")
 
-        try:
-            self.server_proc = subprocess.Popen(
-                cmd,
+        self.tabview.set("📜 Server Console (Live Logs)")
+        self.gui_logger.write("🚀 Khởi động Bot Server (bot.py)...\n")
+
+        def _runner():
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            env["DISCORD_BOT_TOKEN"] = token
+
+            proc = subprocess.Popen(
+                [sys.executable, str(bot_script)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
                 cwd=str(APP_DIR),
-                env=child_env,
-                creationflags=creationflags,
-                startupinfo=startupinfo,
+                env=env,
             )
-            self.server_running = True
-            self.server_start_time = time.time()
+            self.server_proc = proc
 
-            # Launch log reader thread
-            threading.Thread(target=self._server_log_reader, daemon=True).start()
+            for line in proc.stdout:
+                self.gui_logger.write(line)
 
-            self.btn_start_server.configure(state="disabled")
-            self.btn_stop_server.configure(state="normal")
-            self.btn_restart_server.configure(state="normal")
+            proc.wait()
+            self.server_running = False
+            if self.server_proc == proc:
+                self.after(0, self._stop_server_action)
 
-            self.lbl_server_badge.configure(text="🟢 SERVER ONLINE", text_color="#23a55a")
-            self.card_srv_status.configure(text="🟢 ĐANG CHẠY (ONLINE)", text_color="#23a55a")
-
-            self.tabview.set("📜 Server Console (Live Logs)")
-            self.gui_logger.write(f"✓ Đã khởi động Bot Server thành công (PID: {self.server_proc.pid})\n")
-        except Exception as exc:
-            messagebox.showerror("Lỗi Khởi Động", f"Không thể khởi động server: {exc}")
-            self.gui_logger.write(f"✗ Lỗi khởi động tiến trình server: {exc}\n")
+        self.server_thread = threading.Thread(target=_runner, daemon=True)
+        self.server_thread.start()
 
     def _stop_server_action(self):
+        self.server_running = False
         if self.server_proc and self.server_proc.poll() is None:
-            self.gui_logger.write("! Đang dừng tiến trình Bot Server...\n")
             try:
                 self.server_proc.terminate()
                 self.server_proc.wait(timeout=3)
@@ -689,114 +537,18 @@ class DiscordServerManagerApp(ctk.CTk):
                     pass
 
         self.server_proc = None
-        self.server_running = False
-        self.server_start_time = 0.0
+        self.btn_start_srv.configure(state="normal")
+        self.btn_stop_srv.configure(state="disabled")
+        self.btn_restart_srv.configure(state="disabled")
 
-        self.btn_start_server.configure(state="normal")
-        self.btn_stop_server.configure(state="disabled")
-        self.btn_restart_server.configure(state="disabled")
-
-        self.lbl_server_badge.configure(text="🔴 SERVER OFFLINE", text_color="#f23f43")
         self.card_srv_status.configure(text="🔴 ĐÃ DỪNG (OFFLINE)", text_color="#da373c")
-        self.card_srv_uptime.configure(text="00h:00m:00s")
-        self.gui_logger.write("! Bot Server đã dừng hoàn toàn.\n")
+        self.lbl_server_badge.configure(text="● SERVER BOT: ĐÃ DỪNG", text_color="#da373c")
+        self.gui_logger.write("⏹️ Server Bot đã dừng.\n")
 
     def _restart_server_action(self):
         self.gui_logger.write("🔄 Đang khởi động lại Bot Server...\n")
         self._stop_server_action()
-        self.after(1000, self._start_server_action)
-
-    def _server_log_reader(self):
-        proc = self.server_proc
-        if not proc or not proc.stdout:
-            return
-
-        for line in iter(proc.stdout.readline, ""):
-            if line:
-                self.gui_logger.write(line)
-            if not self.server_running:
-                break
-
-        if proc.poll() is not None and self.server_running:
-            self.after(0, self._stop_server_action)
-
-    # ----------------------------------------------------
-    # Quick Admin Action Handlers
-    # ----------------------------------------------------
-    def _admin_restart_all_action(self):
-        if not self.server_running:
-            messagebox.showwarning("Server Chưa Chạy", "Vui lòng khởi động Bot Server trước khi thực hiện thao tác này!")
-            return
-        self.gui_logger.write("ℹ [Admin Panel] Gửi yêu cầu tự động khởi động lại stream của mọi user...\n")
-        messagebox.showinfo("Thao Tác Admin", "Lệnh đã được phát tới hệ thống. Hãy xem chi tiết tại tab Nhật Ký Server.")
-
-    def _admin_prune_action(self):
-        if not self.server_running:
-            messagebox.showwarning("Server Chưa Chạy", "Vui lòng khởi động Bot Server trước!")
-            return
-        self.gui_logger.write("ℹ [Admin Panel] Đang dọn dẹp các luồng stream bị rớt mạng / reconnecting...\n")
-        messagebox.showinfo("Thao Tác Admin", "Hệ thống đang rà soát và dọn luồng treo.")
-
-    def _admin_stop_all_action(self):
-        if messagebox.askyesno("Xác Nhận", "Bạn có chắc chắn muốn dừng khẩn cấp toàn bộ các luồng stream của mọi user?"):
-            self.gui_logger.write("! [Admin Panel] Dừng khẩn cấp toàn bộ luồng stream trên bot!\n")
-
-    # ----------------------------------------------------
-    # Client Mode Streaming (Optional Tab)
-    # ----------------------------------------------------
-    def _client_stream_action(self):
-        token = self.entry_client_token.get().strip()
-        if not token:
-            messagebox.showerror("Thiếu Token", "Vui lòng nhập Token Discord cần cày!")
-            return
-
-        self.btn_client_stream.configure(state="disabled")
-        self.btn_client_stop.configure(state="normal")
-        self.client_stream_running = True
-
-        self.tabview.set("📜 Server Console (Live Logs)")
-        self.gui_logger.write("ℹ Khởi chạy luồng Client Streamer trực tiếp...\n")
-
-        def _worker():
-            st = State(token=token, last_channel_id=self.entry_client_vc.get().strip())
-            sess = Session()
-            console = Console()
-            console.ok = lambda target, detail: self.gui_logger.write(f"✓ {target} · {detail}\n")
-            console.err = lambda target, detail: self.gui_logger.write(f"✗ {target} · {detail}\n")
-            console.warn = lambda target, detail: self.gui_logger.write(f"! {target} · {detail}\n")
-            console.info = lambda target_or_detail, detail="": self.gui_logger.write(f"ℹ {target_or_detail} · {detail}\n" if detail else f"ℹ {target_or_detail}\n")
-            console.live = lambda target, detail: self.gui_logger.write(f"● {target} · {detail}\n")
-
-            eng = GatewayStreamEngine(st, sess, console)
-            self.client_stream_engine = eng
-
-            while self.client_stream_running and not eng.stopped_by_user:
-                try:
-                    eng.start_stream(channel_id=st.last_channel_id, wait_for_stdin=False)
-                except Exception as exc:
-                    console.warn("stream", f"Lỗi chu kỳ stream: {exc}")
-                if not self.client_stream_running or eng.stopped_by_user:
-                    break
-                time.sleep(3)
-
-            self.after(0, self._client_stop_action)
-
-        self.client_stream_thread = threading.Thread(target=_worker, daemon=True)
-        self.client_stream_thread.start()
-
-    def _client_stop_action(self):
-        self.client_stream_running = False
-        if self.client_stream_engine:
-            self.client_stream_engine.stopped_by_user = True
-            self.client_stream_engine.running = False
-            if self.client_stream_engine.ws:
-                try:
-                    self.client_stream_engine.ws.close()
-                except Exception:
-                    pass
-        self.btn_client_stream.configure(state="normal")
-        self.btn_client_stop.configure(state="disabled")
-        self.gui_logger.write("! Đã dừng phiên stream trực tiếp.\n")
+        self.after(1500, self._start_server_action)
 
     # ----------------------------------------------------
     # Periodic Telemetry & Logs Polling
@@ -813,25 +565,23 @@ class DiscordServerManagerApp(ctk.CTk):
         self.after(80, self._poll_log_queue)
 
     def _update_telemetry_loop(self):
-        # Update server uptime
         if self.server_running and self.server_start_time > 0:
             uptime_secs = time.time() - self.server_start_time
             self.card_srv_uptime.configure(text=format_timer(uptime_secs))
 
-        # Scan user files on disk for statistics
         user_files = list(USER_DATA_DIR.glob("*.json")) if USER_DATA_DIR.exists() else []
         tot_users = len(user_files)
-        tot_stream_hours = 0.0
+        tot_game_hours = 0.0
 
         for f in user_files:
             try:
                 d = json.loads(f.read_text(encoding="utf-8"))
-                tot_stream_hours += float(d.get("total_stream_hours_claimed", 0.0))
+                tot_game_hours += float(d.get("total_hours_claimed", 0.0))
             except Exception:
                 pass
 
         self.card_total_users.configure(text=f"{tot_users} users")
-        self.card_total_hours.configure(text=f"{tot_stream_hours:,.1f}h")
+        self.card_total_hours.configure(text=f"{tot_game_hours:,.0f}h")
 
         self.after(1000, self._update_telemetry_loop)
 
