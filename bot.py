@@ -421,7 +421,7 @@ class ControlPanelView(ui.View):
         reel = toinaylogi.default_engine.generate_spin_reel(actress)
         embed = toinaylogi.build_actress_embed(actress, interaction.user)
         view = toinaylogi.ToiNayLoGiView(user_id=interaction.user.id)
-        await interaction.response.send_message(content=f"🌀 *Đang quay hòm...*\n{reel}", embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(content=f"🌀 *Đang quay hòm...*\n{reel}", embed=embed, view=view, ephemeral=False)
 
     @ui.button(label="⚙️ Cài Đặt Token", style=discord.ButtonStyle.secondary, row=1, emoji="🔑", custom_id="panel_btn_setup")
     async def btn_setup(self, interaction: discord.Interaction, button: ui.Button):
@@ -585,10 +585,10 @@ async def handle_list_quests(interaction: discord.Interaction) -> None:
     if not state.has_token:
         return await interaction.response.send_message("⚠️ Vui lòng lưu Token trước qua `/setup`!", ephemeral=True)
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     ok, quests, err = await asyncio.to_thread(quest_manager.fetch_all_quests, state.token)
     if not ok:
-        return await interaction.followup.send(f"❌ Không thể tải danh sách quests: `{err}`", ephemeral=True)
+        return await interaction.followup.send(f"❌ Không thể tải danh sách quests: `{err}`", ephemeral=False)
 
     orbs = await asyncio.to_thread(quest_manager.get_orbs_balance, state.token)
     embed = discord.Embed(
@@ -610,7 +610,7 @@ async def handle_list_quests(interaction: discord.Interaction) -> None:
                 inline=False,
             )
 
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 async def handle_claim_quests(interaction: discord.Interaction) -> None:
@@ -619,7 +619,7 @@ async def handle_claim_quests(interaction: discord.Interaction) -> None:
     if not state.has_token:
         return await interaction.response.send_message("⚠️ Vui lòng lưu Token trước qua `/setup`!", ephemeral=True)
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     store = quest_manager.QuestStore(state.token)
     await asyncio.to_thread(store.fetch_quests)
     claimed_count = await asyncio.to_thread(store.claim_all)
@@ -633,7 +633,7 @@ async def handle_claim_quests(interaction: discord.Interaction) -> None:
         ),
         color=discord.Color.green(),
     )
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 async def run_farm_games(interaction: discord.Interaction, count: int, hours: float) -> None:
@@ -644,7 +644,7 @@ async def run_farm_games(interaction: discord.Interaction, count: int, hours: fl
     if not state.has_cookie:
         return await interaction.response.send_message("❌ Cày giờ game cần cookie `cf_clearance`. Vui lòng cập nhật qua `/setup`.", ephemeral=True)
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
 
     user_file = get_user_state_file(user_id)
     controller = ApplicationController(session_path=user_file)
@@ -653,7 +653,7 @@ async def run_farm_games(interaction: discord.Interaction, count: int, hours: fl
 
     res = await asyncio.to_thread(controller.start_headless, games_count=count, hours=hours)
     if not res.get("success"):
-        return await interaction.followup.send(f"❌ Cày game thất bại: `{res.get('error')}`", ephemeral=True)
+        return await interaction.followup.send(f"❌ Cày game thất bại: `{res.get('error')}`", ephemeral=False)
 
     fresh_state = get_user_state(user_id)
     accepted = res.get("accepted", 0)
@@ -671,7 +671,7 @@ async def run_farm_games(interaction: discord.Interaction, count: int, hours: fl
         ),
         color=discord.Color.green(),
     )
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 async def handle_view_profile(interaction: discord.Interaction) -> None:
@@ -680,7 +680,7 @@ async def handle_view_profile(interaction: discord.Interaction) -> None:
     if not state.has_token:
         return await interaction.response.send_message("❌ Vui lòng lưu Token trước qua `/setup`!", ephemeral=True)
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
 
     try:
         req = urllib.request.Request(
@@ -694,7 +694,7 @@ async def handle_view_profile(interaction: discord.Interaction) -> None:
             avatar = me_data.get("avatar")
             avatar_url = f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" if avatar else None
     except Exception as e:
-        return await interaction.followup.send(f"❌ Không thể đọc profile từ Discord API: `{e}`", ephemeral=True)
+        return await interaction.followup.send(f"❌ Không thể đọc profile từ Discord API: `{e}`", ephemeral=False)
 
     embed = discord.Embed(
         title=f"👤 Hồ Sơ Tài Khoản: @{uname}",
@@ -708,7 +708,7 @@ async def handle_view_profile(interaction: discord.Interaction) -> None:
     embed.add_field(name="Số Game Đã Tích Lũy", value=f"`{state.total_games_claimed}` games", inline=True)
     embed.set_footer(text="Discord Badge Maximizer • Bảo mật DES+AES")
 
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 # ==========================================
@@ -886,7 +886,7 @@ async def help_cmd(interaction: discord.Interaction):
         ),
         inline=False,
     )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
 # --- QUEST SUBCOMMANDS ---
@@ -926,14 +926,14 @@ async def quest_orbs_cmd(interaction: discord.Interaction):
     if not state.has_token:
         return await interaction.response.send_message("⚠️ Vui lòng lưu Token trước qua `/setup`!", ephemeral=True)
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     orbs = await asyncio.to_thread(quest_manager.get_orbs_balance, state.token)
     embed = discord.Embed(
         title="🔮 Số Dư Discord Orbs",
         description=f"Số dư hiện tại của bạn: **{orbs:,} Orbs**",
         color=discord.Color.purple(),
     )
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 # --- TOI NAY LO GI SUBCOMMANDS ---
@@ -980,13 +980,13 @@ async def toinaylogi_catalog_cmd(interaction: discord.Interaction, tier: Optiona
             value=f"Cup **{a.cup}** | Mã: [`{a.best_code}`](https://jav.guru/?s={a.best_code})\n*{a.quote}*",
             inline=True,
         )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
 @toinaylogi_group.command(name="ti-le", description="Xem bảng tỉ lệ phẩm cấp và độ hiếm")
 async def toinaylogi_tile_cmd(interaction: discord.Interaction):
     embed = toinaylogi.build_tier_rates_embed()
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
 # --- ADMIN SUBCOMMANDS ---

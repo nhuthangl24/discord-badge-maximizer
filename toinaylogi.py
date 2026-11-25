@@ -764,4 +764,4 @@ class ToiNayLoGiView(ui.View):
     @ui.button(label="📊 Xem Tỉ Lệ", style=discord.ButtonStyle.secondary, emoji="📈")
     async def btn_show_rates(self, interaction: discord.Interaction, button: ui.Button):
         embed = build_tier_rates_embed()
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=False)
